@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy import sparse
 from scipy.sparse import csgraph
+from scipy.spatial import cKDTree
 
 
 @dataclass
@@ -26,20 +27,36 @@ class Mesh:
     def from_triangles(cls, tris: np.ndarray, tol: float | None = None) -> "Mesh":
         """Weld a triangle soup.
 
-        With ``tol=None`` corners are merged only when their float32 values are
-        bit-identical (what every STL exporter produces for shared corners).
-        With a tolerance, corners are snapped to a grid of that pitch first.
+        Corners are first merged when their float32 values are bit-identical (what
+        every STL exporter produces for shared corners).  With ``tol`` (mm), corners
+        closer than that are merged as well: some exporters leave copies of a shared
+        corner that differ in the last bit, which would otherwise crack the surface
+        wherever the smoother moves one copy but not the other.
         """
         pts = np.asarray(tris, dtype=np.float64).reshape(-1, 3)
         if len(pts) == 0:
             return cls(np.zeros((0, 3)), np.zeros((0, 3), dtype=np.int64))
-        if tol is None:
-            key = pts.astype(np.float32) + np.float32(0.0)  # fold -0.0 into 0.0
-            key = np.ascontiguousarray(key).view(np.int32)
-        else:
-            key = np.round(pts / float(tol)).astype(np.int64)
+        key = pts.astype(np.float32) + np.float32(0.0)  # fold -0.0 into 0.0
+        key = np.ascontiguousarray(key).view(np.int32)
         _, first, inv = np.unique(key, axis=0, return_index=True, return_inverse=True)
+        inv = inv.reshape(-1)
         verts = pts[first]
+        if tol and tol > 0 and len(verts) > 1:
+            pairs = cKDTree(verts).query_pairs(float(tol), output_type="ndarray")
+            if len(pairs):
+                n = len(verts)
+                g = sparse.coo_matrix(
+                    (np.ones(len(pairs), dtype=np.int8), (pairs[:, 0], pairs[:, 1])), shape=(n, n)
+                )
+                ncomp, lab = csgraph.connected_components(g, directed=False)
+                rep = np.full(ncomp, n, dtype=np.int64)
+                np.minimum.at(rep, lab, np.arange(n))  # lowest index of each cluster represents it
+                keep = np.unique(rep)
+                remap = np.empty(ncomp, dtype=np.int64)
+                remap[np.argsort(rep)] = np.arange(ncomp)
+                new_index = remap[lab]
+                verts = verts[rep[np.argsort(rep)]]
+                inv = new_index[inv]
         faces = inv.reshape(-1, 3).astype(np.int64)
         return cls(verts, faces)
 

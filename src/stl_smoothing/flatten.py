@@ -39,6 +39,8 @@ class FlattenResult:
     plateaus: list[Plateau] = field(default_factory=list)
     smoothed_faces: np.ndarray | None = None  # bool per face: part of a smoothed plateau
     snapped_faces: np.ndarray | None = None  # bool per face: exactly flat, snapped
+    facing: np.ndarray | None = None  # int8 per face: +1 plateau on a top, -1 on a ceiling, 0 none
+    face_plateau: np.ndarray | None = None  # per face: index into ``plateaus`` (-1 none)
     skipped: list[str] = field(default_factory=list)  # candidates that were left alone, with the reason
     already_flat: list = field(default_factory=list)  # (facing, level, area) of surfaces that need no change
     z_offset: float = 0.0  # lowest point of the input (heights are measured from it)
@@ -136,6 +138,10 @@ def _describe(res: FlattenResult, work: Mesh, grid: LayerGrid, A: Analysis, P: P
     pg = A.plateau_group
     res.smoothed_faces = pg >= 0
     res.snapped_faces = np.zeros(F, bool)
+    res.facing = np.zeros(F, dtype=np.int8)
+    res.face_plateau = -np.ones(F, dtype=np.int64)
+    live = pg >= 0
+    res.facing[live] = np.where(A.gsign[pg[live]] > 0, 1, -1)
     tz = z[faces]
 
     # -- smoothed plateaus: one entry per (orientation, final level); the patches of a
@@ -155,6 +161,7 @@ def _describe(res: FlattenResult, work: Mesh, grid: LayerGrid, A: Analysis, P: P
             vs = np.unique(faces[m])
             zlo, zhi = np.percentile(z[vs], [0.5, 99.5])
             ncomp = len(np.unique(pc[m]))
+            res.face_plateau[m] = len(res.plateaus)
             res.plateaus.append(
                 Plateau(
                     kind="smoothed",
@@ -174,7 +181,10 @@ def _describe(res: FlattenResult, work: Mesh, grid: LayerGrid, A: Analysis, P: P
     if P.snap_exact_flat and len(A.exact_area):
         need = exact_needs_snap(A, grid, P)
         for c in np.flatnonzero(need):
-            res.snapped_faces |= A.exact_label == c
+            m_exact = A.exact_label == c
+            res.snapped_faces |= m_exact
+            res.facing[m_exact] = 1 if A.exact_sign[c] > 0 else -1
+            res.face_plateau[m_exact] = len(res.plateaus)
             res.plateaus.append(
                 Plateau(
                     kind="snapped",
@@ -194,12 +204,17 @@ def _describe(res: FlattenResult, work: Mesh, grid: LayerGrid, A: Analysis, P: P
         res.already_flat.append((("top" if sign > 0 else "ceiling"), lvl, area))
 
     # -- what was found but left alone, and why
+    min_report = 0.25 * P.min_area  # specks are not worth mentioning
     for sign, w, why in A.rejected:
+        if w["mass"] < min_report:
+            continue
         res.skipped.append(
             f"{'top' if sign > 0 else 'ceiling'} surface near {w['rep']:.2f} mm "
             f"({w['mass']:.0f} mm²): {why}"
         )
     for g, area, cut, why in A.rejected_components:
+        if area < min_report:
+            continue
         lvl = A.windows[g]["rep"] if g < len(A.windows) else float("nan")
         res.skipped.append(
             f"{'top' if A.gsign[g] > 0 else 'ceiling'} patch near {lvl:.2f} mm ({area:.0f} mm²): {why}"

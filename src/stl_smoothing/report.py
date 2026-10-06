@@ -45,6 +45,30 @@ def region_layers(mesh: Mesh, grid: LayerGrid, faces: np.ndarray, min_frac: floa
     return ids[w > min_frac * w.sum()]
 
 
+def _level_colours(levels: np.ndarray, final: np.ndarray) -> dict:
+    """Blue (lower) -> pale blue (the final level) -> peach -> red (higher)."""
+    from matplotlib.colors import LinearSegmentedColormap
+
+    cmap = LinearSegmentedColormap.from_list(
+        "layers",
+        [(0.0, "#4b63d1"), (0.2, "#8aa6f2"), (0.4, "#c4d3f5"), (0.55, "#f2d3c4"), (0.75, "#e8826a"), (1.0, "#b8232f")],
+    )
+    n = len(levels)
+    if n == 0:
+        return {}
+    ref = int(np.argmin(np.abs(levels - (float(np.median(final)) if len(final) else float(np.median(levels))))))
+    out = {}
+    for i, lv in enumerate(levels):
+        if i == ref:
+            t = 0.4
+        elif i < ref:
+            t = 0.4 * i / ref
+        else:
+            t = 0.4 + 0.6 * (i - ref) / max(n - 1 - ref, 1)
+        out[lv] = cmap(t)
+    return out
+
+
 def _describe(levels: np.ndarray, what: str) -> str:
     if len(levels) == 0:
         return f"No {what} found"
@@ -64,6 +88,8 @@ def render_comparison(
     what: str = "Smoothed surfaces",
     footnote: str | None = None,
     dpi: int = 110,
+    before_text: str | None = None,
+    after_text: str | None = None,
 ) -> dict:
     """Render ``before`` and ``after`` side by side and save a PNG.
 
@@ -76,11 +102,7 @@ def render_comparison(
     lv_before = region_layers(before, grid, region)
     lv_after = region_layers(after, grid, region)
     all_levels = np.unique(np.concatenate([lv_before, lv_after]))
-    cmap = plt.get_cmap("coolwarm")
-    colour_of = {
-        lv: cmap(0.5 if len(all_levels) == 1 else i / (len(all_levels) - 1))
-        for i, lv in enumerate(all_levels)
-    }
+    colour_of = _level_colours(all_levels, lv_after)
     lo, hi = before.verts[:, :2].min(0), before.verts[:, :2].max(0)
     span = np.maximum(hi - lo, 1e-9)
     fig_h = 7.0
@@ -113,7 +135,8 @@ def render_comparison(
         if view == "bottom":
             ax.invert_xaxis()
         ax.axis("off")
-        ax.set_title(f"{title}\n{_describe(levels, what)}", loc="left", fontsize=11)
+        text = before_text if title == "Before" else after_text
+        ax.set_title(f"{title}\n{text or _describe(levels, what)}", loc="left", fontsize=11)
     handles = [
         Patch(facecolor=colour_of[lv], label=f"{lv:.2f} mm") for lv in all_levels
     ]

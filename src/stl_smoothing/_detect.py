@@ -379,12 +379,14 @@ def boundary_stats(topo, area, valid, soft, grp, cl, ncomp, gsign, ignore=None, 
         sB = sgn_c[cA]
         is_soft = np.where(sB > 0, soft[+1][B[m]], soft[-1][B[m]])
         ln = el[m]
+        is_same = np.zeros(len(ln), bool)
         if same_level is not None:
             is_same = is_soft & same_level(B[m], comp_g[cA])
-            np.add.at(same, cA[is_same], ln[is_same])
-            is_soft = is_soft & ~is_same
-        np.add.at(cut, cA[is_soft], ln[is_soft])
-        np.add.at(hard, cA[~is_soft & ~(is_same if same_level is not None else False)], ln[~is_soft & ~(is_same if same_level is not None else False)])
+        is_cut = is_soft & ~is_same
+        is_hard = ~is_soft
+        np.add.at(same, cA[is_same], ln[is_same])
+        np.add.at(cut, cA[is_cut], ln[is_cut])
+        np.add.at(hard, cA[is_hard], ln[is_hard])
     of = topo.open_face
     k = cl[of] >= 0
     np.add.at(hard, cl[of[k]], topo.open_len[k])
