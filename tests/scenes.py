@@ -305,7 +305,7 @@ def all_synthetic(small: bool = False) -> list[Scene]:
 
 # ------------------------------------------------- the real Batwing, re-noised
 def batwing_before(after: Mesh, ptp=1.2, seed=5, panel_z=9.8, wavelengths=(25.0, 80.0),
-                   style: str = "blobs") -> Scene:
+                   style: str = "blobs", jitter: float = 0.0) -> Scene:
     """Recreate a "Before" model from the already-flat Batwing "After" mesh.
 
     The panels (faces exactly flat at ``panel_z``) get a smooth random height
@@ -339,6 +339,10 @@ def batwing_before(after: Mesh, ptp=1.2, seed=5, panel_z=9.8, wavelengths=(25.0,
         z[pv] = panel_z + 0.35 * ptp * stripes + 0.4 * wf(xy[pv, 0], xy[pv, 1], ptp)
     else:
         z[pv] = panel_z + wf(xy[pv, 0], xy[pv, 1], ptp)
+    if jitter > 0:
+        # per-vertex facet noise of a marching-cubes / remeshed surface (uniform, +-jitter mm)
+        rng = np.random.default_rng(seed + 1000)
+        z[pv] += rng.uniform(-jitter, jitter, pv.sum())
     before = Mesh(np.column_stack([after.verts[:, :2], z]), after.faces)
 
     sc = Scene("batwing_before", before, info={"ptp": ptp, "panel_z": panel_z, "seed": seed})

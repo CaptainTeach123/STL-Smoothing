@@ -58,6 +58,16 @@ class LayerGrid:
         """Height at which the layer a top surface at ``z`` ends."""
         return self.boundary(self.layer_number(z))
 
+    def within_one_layer(self, zmin, zmax, margin: float = 0.05) -> bool:
+        """True if every height in ``[zmin, zmax]`` prints on the same layer.
+
+        ``margin`` (a fraction of the layer height) keeps the heights clear of the
+        slicer's sampling planes: a surface that grazes a plane may print on either
+        layer, so it counts as *not* safely inside one.
+        """
+        m = margin * self.layer_height + 1e-6  # inclusive of the margin itself
+        return bool(self.layer_number(zmin - m) == self.layer_number(zmax + m))
+
     def layer_count_between(self, z0: float, z1: float) -> int:
         """How many distinct layers separate surfaces at ``z0`` and ``z1``."""
         return int(abs(self.layer_number(z1) - self.layer_number(z0)))
