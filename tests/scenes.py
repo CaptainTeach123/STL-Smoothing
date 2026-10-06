@@ -229,7 +229,7 @@ def panel_with_dome(ptp=1.2, panel=10.0, dome_h=8.0, dome_r=18.0, steep=True, ce
     return sc
 
 
-def two_level_panels(ptp=1.0, lo=10.0, hi=10.6, cell=0.5, seed=7, size=(100.0, 60.0)) -> Scene:
+def two_level_panels(ptp=0.8, lo=10.0, hi=11.0, cell=0.5, seed=7, size=(100.0, 60.0)) -> Scene:
     wf = WaveField(seed).calibrate((0, size[0]), (0, size[1]))
     xm = size[0] / 2
 
@@ -304,7 +304,8 @@ def all_synthetic(small: bool = False) -> list[Scene]:
 
 
 # ------------------------------------------------- the real Batwing, re-noised
-def batwing_before(after: Mesh, ptp=1.2, seed=5, panel_z=9.8, wavelengths=(25.0, 80.0)) -> Scene:
+def batwing_before(after: Mesh, ptp=1.2, seed=5, panel_z=9.8, wavelengths=(25.0, 80.0),
+                   style: str = "blobs") -> Scene:
     """Recreate a "Before" model from the already-flat Batwing "After" mesh.
 
     The panels (faces exactly flat at ``panel_z``) get a smooth random height
@@ -328,7 +329,16 @@ def batwing_before(after: Mesh, ptp=1.2, seed=5, panel_z=9.8, wavelengths=(25.0,
     # only vertices strictly inside the panel get the field; vertices that also
     # belong to walls / dome move with it (they are shared), which stretches the
     # walls exactly like the original generator output did.
-    z[pv] = panel_z + wf(xy[pv, 0], xy[pv, 1], ptp)
+    if style == "bands":
+        # broad horizontal stripes like the original generator output, plus a little blob noise
+        rng = np.random.default_rng(seed)
+        ph = rng.uniform(0, 2 * np.pi)
+        lam = rng.uniform(35.0, 60.0)
+        stripes = np.sin(2 * np.pi * xy[pv, 1] / lam + ph) + 0.5 * np.sin(2 * np.pi * xy[pv, 1] / (lam * 0.43) + 2 * ph)
+        stripes = stripes / np.abs(stripes).max()
+        z[pv] = panel_z + 0.35 * ptp * stripes + 0.4 * wf(xy[pv, 0], xy[pv, 1], ptp)
+    else:
+        z[pv] = panel_z + wf(xy[pv, 0], xy[pv, 1], ptp)
     before = Mesh(np.column_stack([after.verts[:, :2], z]), after.faces)
 
     sc = Scene("batwing_before", before, info={"ptp": ptp, "panel_z": panel_z, "seed": seed})
@@ -343,3 +353,54 @@ def batwing_before(after: Mesh, ptp=1.2, seed=5, panel_z=9.8, wavelengths=(25.0,
     pumpkin = nb & (after.verts[:, 2] > panel_z + 1.5) & ~near_panel & ~pv
     sc.protected["pumpkin"] = (pumpkin, 0.12)
     return sc
+
+
+# ------------------------------------------------------------------- holdout
+def plate_with_exact_blocks(ptp=1.0, panel=10.0, cell=0.5, seed=31, size=(100.0, 80.0)) -> Scene:
+    """Noisy panel plus two *intentional* exactly-flat raised blocks.
+
+    The blocks (tops at 10.51 and 10.93) are real features, one of them inside
+    the +-0.6 mm neighbourhood of the panel.  They must be neither flattened
+    into the panel nor deleted; the harness lets them move by <= 0.1 mm (the
+    most a snap to the layer grid can do).
+    """
+    wf = WaveField(seed).calibrate((0, size[0]), (0, size[1]))
+    b1 = (15.0, 25.0, 15.0, 30.0)  # x0,x1,y0,y1
+    b2 = (60.0, 85.0, 40.0, 65.0)
+
+    def zt(x, y):
+        z = panel + wf(x, y, ptp)
+        z = np.where((x >= b1[0]) & (x <= b1[1]) & (y >= b1[2]) & (y <= b1[3]), 10.51, z)
+        z = np.where((x >= b2[0]) & (x <= b2[1]) & (y >= b2[2]) & (y <= b2[3]), 10.93, z)
+        return z
+
+    m = heightfield_solid(0, size[0], 0, size[1], cell, zt, 0.0, 0.0, seed)
+    sc = Scene("plate_with_exact_blocks", m, info={})
+    fx, fy = _face_xy(m)
+    up = _top_faces(m)
+    away = np.ones(m.n_faces, bool)
+    for b in (b1, b2):
+        away &= ~((fx > b[0] - 3) & (fx < b[1] + 3) & (fy > b[2] - 3) & (fy < b[3] + 3))
+    sc.targets["panel"] = up & away
+    v = m.verts
+    for nm, b, tol in (("block1", b1, 0.101), ("block2", b2, 0.101)):
+        inside = (v[:, 0] > b[0] + 1) & (v[:, 0] < b[1] - 1) & (v[:, 1] > b[2] + 1) & (v[:, 1] < b[3] - 1) & (v[:, 2] > 5)
+        sc.protected[nm] = (inside, tol)
+    return sc
+
+
+def all_holdout(small: bool = False) -> list[Scene]:
+    """Unseen variants: other seeds, amplitudes, awkward heights, irregular meshes."""
+    cell = 1.0 if small else 0.5
+    out = [
+        wavy_slab(ptp=0.5, base=7.1, seed=21, cell=cell),          # base sits on a slicer sample plane
+        wavy_slab(ptp=1.8, base=15.0, seed=22, cell=cell),
+        wavy_slab(ptp=1.0, base=10.0, seed=26, cell=cell, jitter=0.45),
+        panel_with_dome(seed=23, dome_r=25.0, ptp=1.0, panel=5.1, cell=cell),
+        panel_with_dome(seed=27, dome_r=15.0, ptp=1.4, panel=12.0, skirt=1.2, skirt_w=5.0, cell=cell),
+        ceiling_pocket(seed=24, ptp=0.8, ceil=6.1, cell=cell),
+        terraces_with_ramp(seed=25, ramp_deg=2.0, ptp=0.6, cell=cell),
+        tilted_flat(angle_deg=0.15, base=7.7, cell=cell),
+        plate_with_exact_blocks(cell=cell),
+    ]
+    return out

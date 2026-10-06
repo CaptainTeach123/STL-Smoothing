@@ -46,6 +46,18 @@ def evaluate(scene, new_verts: np.ndarray, grid: LayerGrid | None = None) -> dic
     res["flipped"] = int(m.flipped_faces(new_verts).sum())
     res["max_dz"] = float(np.abs(new_verts[:, 2] - m.verts[:, 2]).max())
     res["n_changed"] = int((np.abs(new_verts[:, 2] - m.verts[:, 2]) > 1e-9).sum())
+    # collateral deformation: how much did the surface normal turn on faces that
+    # are NOT supposed to be flattened (walls stretched by a moved neighbour,
+    # creases, ...)?  Reported as degrees (max and 99.9th percentile).
+    n0, a0 = m.face_normals_areas()
+    n1, a1 = m.face_normals_areas(new_verts)
+    tmask = np.zeros(m.n_faces, bool)
+    for mask in scene.targets.values():
+        tmask |= mask
+    other = ~tmask & (a0 > 1e-9)
+    ang = np.degrees(np.arccos(np.clip((n0 * n1).sum(1), -1, 1)))
+    res["normal_turn_max"] = float(ang[other].max()) if other.any() else 0.0
+    res["normal_turn_p999"] = float(np.percentile(ang[other], 99.9)) if other.any() else 0.0
     # --- targets
     tg = {}
     for name, mask in scene.targets.items():
