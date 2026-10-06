@@ -9,6 +9,7 @@ without any tolerance.
 
 from __future__ import annotations
 
+import re
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -78,32 +79,24 @@ def _read_binary(raw: bytes, count: int | None = None) -> StlData:
     )
 
 
+_VERTEX_RE = re.compile(rb"vertex\s+(\S+)\s+(\S+)\s+(\S+)", re.IGNORECASE)
+_SOLID_RE = re.compile(rb"^\s*solid[ \t]*([^\r\n]*)", re.IGNORECASE)
+
+
 def _read_ascii(raw: bytes) -> StlData:
-    text = raw.decode("utf-8", errors="replace")
-    tokens = text.split()
-    arr = np.array(tokens, dtype=object)
-    is_vertex = arr == "vertex"
-    idx = np.flatnonzero(is_vertex)
-    if idx.size == 0:
+    found = _VERTEX_RE.findall(raw)
+    if not found:
         return StlData(tris=np.zeros((0, 3, 3)), source_format="ascii")
-    if idx.size % 3:
+    if len(found) % 3:
         raise StlError("ASCII STL has a vertex count that is not a multiple of 3")
     try:
-        coords = np.stack([arr[idx + 1], arr[idx + 2], arr[idx + 3]], axis=1).astype(
-            np.float64
-        )
-    except ValueError as exc:  # pragma: no cover - malformed number
+        coords = np.array(found).astype(np.float64)
+    except ValueError as exc:
         raise StlError(f"ASCII STL contains a malformed number: {exc}") from exc
     # Round-trip through float32 so that ASCII and binary inputs weld the same.
     coords = coords.astype(np.float32).astype(np.float64)
-    name = ""
-    if len(tokens) > 1 and tokens[0].lower() == "solid":
-        # The name runs up to the first "facet" keyword.
-        try:
-            stop = tokens.index("facet")
-        except ValueError:
-            stop = 1
-        name = " ".join(tokens[1:stop])
+    m = _SOLID_RE.match(raw[:512])
+    name = m.group(1).decode("utf-8", errors="replace").strip() if m else ""
     return StlData(
         tris=coords.reshape(-1, 3, 3),
         name=name,
