@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
+import traceback
 from pathlib import Path
 
 import numpy as np
@@ -31,8 +33,18 @@ SOFT_LIMIT_TRIANGLES = 1_500_000
 _DTYPES = {"float32": "float32", "uint8": "uint8", "uint32": "uint32"}
 
 
-def _fail(message: str) -> str:
-    return json.dumps({"ok": False, "error": message, "version": __version__})
+def _fail(message: str, detail: str | None = None) -> str:
+    out = {"ok": False, "error": message, "version": __version__}
+    if detail:
+        out["detail"] = detail
+    return json.dumps(out)
+
+
+def _file_error(exc: Exception) -> str:
+    text = str(exc)
+    if text.startswith("the file: "):
+        text = text[len("the file: "):]
+    return f"That file could not be read: {text}. Is it a binary or ASCII STL file?"
 
 
 def process(path_in: str, path_out: str, options_json: str = "{}", progress=None, preview_dir: str | None = None) -> str:
@@ -63,24 +75,33 @@ def process(path_in: str, path_out: str, options_json: str = "{}", progress=None
     tick("Reading the STL file")
     try:
         raw = Path(path_in).read_bytes()
-        data = parse_stl(raw, source="this file")
+        data = parse_stl(raw, source="the file")
     except (StlError, OSError) as exc:
-        return _fail(str(exc))
+        return _fail(_file_error(exc))
     del raw
     if len(data.tris) == 0:
         return _fail("The file contains no triangles.")
     if not np.isfinite(data.tris).all():
         return _fail("The file contains NaN or infinite coordinates.")
 
+    try:
+        return _run(data, grid, params, path_out, preview_dir, tick)
+    except Exception as exc:  # noqa: BLE001 - whatever happens, the page gets a message, not a stack dump
+        return _fail(f"The model could not be processed ({type(exc).__name__}: {exc}).", traceback.format_exc())
+
+
+def _run(data, grid: LayerGrid, params: Params, path_out: str, preview_dir: str | None, tick) -> str:
     tick("Joining shared corners")
     tol = auto_weld_tol(data.tris)
     mesh = Mesh.from_triangles(data.tris, tol=tol)
+    header, attrs, source_format = data.header, data.attrs, data.source_format
+    del data  # the triangle soup is not needed again; free it before the memory peak
     stats = mesh.edge_manifold_stats()
     lo, hi = mesh.bbox()
     meta: dict = {
         "ok": True,
         "version": __version__,
-        "source_format": data.source_format,
+        "source_format": source_format,
         "triangles": int(mesh.n_faces),
         "vertices": int(mesh.n_verts),
         "extent": [float(v) for v in (hi - lo)],
@@ -98,7 +119,7 @@ def process(path_in: str, path_out: str, options_json: str = "{}", progress=None
 
     tick("Summarising")
     lines: list[str] = []
-    summarize(res, mesh, after, grid, False, lines.append)
+    summarize(res, mesh, after, grid, False, lines.append, cli=False)
     edges = layer_edge_totals(res, mesh, after, grid)
     meta.update(
         summary=lines,
@@ -122,8 +143,8 @@ def process(path_in: str, path_out: str, options_json: str = "{}", progress=None
     meta["output_bytes"] = 0
     if res.n_moved:
         tick("Writing the smoothed STL")
-        header = data.header if (data.source_format == "binary" and data.header.strip(b"\x00")) else b"stl-smoothing"
-        blob = stl_bytes(after.to_triangles(), binary=True, header=header, attrs=data.attrs)
+        header = header if (source_format == "binary" and header.strip(b"\x00")) else b"stl-smoothing"
+        blob = stl_bytes(after.to_triangles(), binary=True, header=header, attrs=attrs)
         Path(path_out).write_bytes(blob)
         meta["output_bytes"] = len(blob)
 
@@ -144,3 +165,51 @@ def process(path_in: str, path_out: str, options_json: str = "{}", progress=None
             meta["preview"] = pv_meta
     tick("Done")
     return json.dumps(meta)
+
+
+def _selftest_model() -> np.ndarray:
+    """A small closed slab (42 x 42 x ~10 mm) whose top wobbles across five or six 0.2 mm layers."""
+    n, step = 14, 3.0
+    xs = np.arange(n + 1) * step
+    gx, gy = np.meshgrid(xs, xs, indexing="ij")
+    top = 10.0 + 0.45 * np.sin(gx / 9.0) * np.cos(gy / 11.0) + 0.2 * np.sin(gx / 4.0 + gy / 6.0)
+
+    def corner(i, j, z=None):
+        return (xs[i], xs[j], top[i, j] if z is None else z)
+
+    tris = []
+    for i in range(n):
+        for j in range(n):
+            a, b, c, d = (i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)
+            tris += [(corner(*a), corner(*b), corner(*c)), (corner(*a), corner(*c), corner(*d))]  # top, up
+            tris += [(corner(*a, 0.0), corner(*c, 0.0), corner(*b, 0.0)),
+                     (corner(*a, 0.0), corner(*d, 0.0), corner(*c, 0.0))]  # bottom, down
+    outward = ((0.0, -1.0), (1.0, 0.0), (0.0, 1.0), (-1.0, 0.0))
+    edges = ([((i, 0), (i + 1, 0)) for i in range(n)], [((n, j), (n, j + 1)) for j in range(n)],
+             [((i + 1, n), (i, n)) for i in range(n)], [((0, j + 1), (0, j)) for j in range(n)])
+    for side, (ox, oy) in zip(edges, outward):
+        for p0, p1 in side:
+            q = [corner(*p0, 0.0), corner(*p1, 0.0), corner(*p1), corner(*p0)]
+            for t in ((q[0], q[1], q[2]), (q[0], q[2], q[3])):
+                normal = np.cross(np.subtract(t[1], t[0]), np.subtract(t[2], t[0]))
+                tris.append(t if normal[0] * ox + normal[1] * oy > 0 else (t[0], t[2], t[1]))
+    return np.asarray(tris, dtype=np.float64)
+
+
+def selftest() -> str:
+    """Smooth a small built-in model and check the result.  The page runs this once before it
+    announces that the engine is ready, so a numpy / scipy problem in the browser shows up as an
+    engine error at load time, not on the first model a visitor tries.  Returns JSON."""
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            src = Path(folder) / "selftest.stl"
+            src.write_bytes(stl_bytes(_selftest_model(), binary=True, header=b"selftest"))
+            meta = json.loads(process(str(src), str(Path(folder) / "out.stl"), json.dumps({"layer_height": 0.2}),
+                                      preview_dir=str(Path(folder) / "pv")))
+        if not meta.get("ok"):
+            return _fail("the built-in test model failed: " + str(meta.get("error")), meta.get("detail"))
+        if meta["flattened"] < 1 or meta["output_bytes"] <= 0 or not meta.get("preview"):
+            return _fail("the built-in test model was not smoothed as expected")
+        return json.dumps({"ok": True, "version": __version__})
+    except Exception as exc:  # noqa: BLE001
+        return _fail(f"the built-in test model failed ({type(exc).__name__}: {exc})", traceback.format_exc())

@@ -21,6 +21,27 @@ def slice_planes(grid: LayerGrid, zmin: float, zmax: float) -> np.ndarray:
     return p[(p >= zmin - h) & (p <= zmax + h)]
 
 
+def _plane_counts(t: np.ndarray, grid: LayerGrid):
+    """For triangles ``t`` (F,3,3): the sampling planes and, per face, the first plane
+    strictly inside its z range and how many planes that is."""
+    z = t[:, :, 2]
+    planes = slice_planes(grid, float(z.min()), float(z.max()))
+    zmin, zmax = z.min(1), z.max(1)
+    lo = np.searchsorted(planes, zmin, side="right")
+    hi = np.searchsorted(planes, zmax, side="left")
+    return planes, lo, np.maximum(hi - lo, 0)
+
+
+def contour_segment_count(mesh: Mesh, grid: LayerGrid, face_mask: np.ndarray | None = None) -> int:
+    """How many segments :func:`contour_segments` would return (an upper bound), without building them."""
+    t = mesh.verts[mesh.faces]
+    if face_mask is not None:
+        t = t[face_mask]
+    if len(t) == 0:
+        return 0
+    return int(_plane_counts(t, grid)[2].sum())
+
+
 def contour_segments(mesh: Mesh, grid: LayerGrid, face_mask: np.ndarray | None = None,
                      verts: np.ndarray | None = None):
     """Exact slicer contour segments of the surface at every mid-layer plane.
@@ -37,13 +58,7 @@ def contour_segments(mesh: Mesh, grid: LayerGrid, face_mask: np.ndarray | None =
         fidx = fidx[face_mask]
     if len(t) == 0:
         return np.zeros((0, 3)), np.zeros((0, 3)), np.zeros(0, np.int64)
-    z = t[:, :, 2]
-    planes = slice_planes(grid, float(z.min()), float(z.max()))
-    zmin, zmax = z.min(1), z.max(1)
-    # for each face, the planes strictly inside (zmin, zmax)
-    lo = np.searchsorted(planes, zmin, side="right")
-    hi = np.searchsorted(planes, zmax, side="left")
-    cnt = np.maximum(hi - lo, 0)
+    planes, lo, cnt = _plane_counts(t, grid)  # for each face, the planes strictly inside (zmin, zmax)
     if cnt.sum() == 0:
         return np.zeros((0, 3)), np.zeros((0, 3)), np.zeros(0, np.int64)
     fi = np.repeat(np.arange(len(t)), cnt)

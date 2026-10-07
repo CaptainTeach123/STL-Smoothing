@@ -24,7 +24,7 @@ def _fmt_plateau(p: Plateau) -> str:
     )
 
 
-def _list(title: str, plateaus: list[Plateau], out, verbose: bool) -> None:
+def _list(title: str, plateaus: list[Plateau], out, verbose: bool, cli: bool = True) -> None:
     """Print a section of plateaus, collapsing a long tail so a model with thousands
     of patches does not flood the terminal."""
     out(title)
@@ -34,7 +34,8 @@ def _list(title: str, plateaus: list[Plateau], out, verbose: bool) -> None:
         out(_fmt_plateau(p))
     rest = ordered[len(shown):]
     if rest:
-        out(f"  ... and {len(rest):,} more ({sum(p.area for p in rest):,.0f} mm² in total; use -v to list all)")
+        out(f"  ... and {len(rest):,} more ({sum(p.area for p in rest):,.0f} mm² in total"
+            + ("; use -v to list all)" if cli else ")"))
 
 
 def flattened_indices(res: FlattenResult) -> list[int]:
@@ -54,7 +55,10 @@ def layer_edge_totals(res: FlattenResult, before: Mesh, after: Mesh, grid: Layer
     )
 
 
-def summarize(res: FlattenResult, before: Mesh, after: Mesh, grid: LayerGrid, verbose: bool, out=print) -> None:
+def summarize(res: FlattenResult, before: Mesh, after: Mesh, grid: LayerGrid, verbose: bool, out=print,
+              cli: bool = True) -> None:
+    """Write the summary line by line to ``out``.  ``cli=False`` words the hints for the web page
+    (which has no ``-v`` or ``--max-range`` option)."""
     flattened = flattened_indices(res)
     levelled = [i for i, p in enumerate(res.plateaus) if p.kind == "smoothed" and p.layers_before <= 1]
     snapped = [i for i, p in enumerate(res.plateaus) if p.kind == "snapped"]
@@ -62,21 +66,23 @@ def summarize(res: FlattenResult, before: Mesh, after: Mesh, grid: LayerGrid, ve
     plural = lambda n: "s" if n != 1 else ""  # noqa: E731
     if flattened:
         _list(f"Flattened {len(flattened)} surface{plural(len(flattened))} "
-              f"(heights above the bed, {grid.layer_height:g} mm layers):", [pl[i] for i in flattened], out, verbose)
+              f"(heights above the bed, {grid.layer_height:g} mm layers):", [pl[i] for i in flattened], out, verbose, cli)
         e0, e1 = layer_edge_totals(res, before, after, grid)
         out(f"Layer edges on those surfaces: {e0:,.0f} mm -> {e1:,.0f} mm")
         if any(pl[i].z_high - pl[i].z_low > 1.0 for i in flattened):
             out("Note: a flattened surface varied by more than 1 mm. If it is really meant to be curved or "
-                "sloped, run again with a smaller --max-range (for example --max-range 1).")
+                "sloped, run again with a smaller "
+                + ("--max-range (for example --max-range 1)." if cli else
+                   "“Largest wobble to flatten” (in the advanced settings), for example 1."))
     elif not (levelled or snapped):
         out("Nothing to flatten: no surface found that is meant to be flat but crosses layer boundaries.")
     if levelled:
         _list(f"Levelled {len(levelled)} nearly-flat surface{plural(len(levelled))} that grazed a slicer "
               f"sampling plane (they already printed on one layer, with a few stray layer edges):",
-              [pl[i] for i in levelled], out, verbose)
+              [pl[i] for i in levelled], out, verbose, cli)
     if snapped:
         _list(f"Moved {len(snapped)} already-flat surface{plural(len(snapped))} off a slicer sampling plane "
-              f"(by at most half a layer):", [pl[i] for i in snapped], out, verbose)
+              f"(by at most half a layer):", [pl[i] for i in snapped], out, verbose, cli)
     if res.already_flat and verbose:
         out("Already printing on a single layer (left unchanged):")
         for facing, lvl, area in res.already_flat:
@@ -86,7 +92,7 @@ def summarize(res: FlattenResult, before: Mesh, after: Mesh, grid: LayerGrid, ve
             f"{res.flipped_faces} flipped faces, {res.degenerate_faces_added} new degenerate faces.")
     if res.skipped:
         out(f"Left alone: {len(res.skipped)} candidate{plural(len(res.skipped))}"
-            + ("" if verbose else " (use -v for details)"))
+            + ("" if verbose or not cli else " (use -v for details)"))
         if verbose:
             for line in res.skipped:
                 out(f"  {line}")

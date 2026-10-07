@@ -6,13 +6,14 @@ import assert from "node:assert/strict";
 
 const source = fs.readFileSync(new URL("../../docs/worker.js", import.meta.url), "utf8");
 
-function makeWorld({ failVersions = 0, failAll = false, processThrows = false, processResult = null } = {}) {
+function makeWorld({ failVersions = 0, failAll = false, processThrows = false, processResult = null, selftest = { ok: true }, manifestStatus = 200 } = {}) {
   const posted = [];
   const fs_ = new Map();
+  const writeOpts = [];
   const imported = [];
   const FS = {
     mkdirTree() {},
-    writeFile(p, d) { fs_.set(p, d); },
+    writeFile(p, d, opts) { fs_.set(p, d); writeOpts.push(opts); },
     readFile(p) {
       if (!fs_.has(p)) throw new Error("ENOENT " + p);
       const v = fs_.get(p);
@@ -28,6 +29,7 @@ function makeWorld({ failVersions = 0, failAll = false, processThrows = false, p
     pyimport(name) {
       assert.equal(name, "stl_smoothing.web");
       return {
+        selftest() { return JSON.stringify(selftest); },
         process(pin, pout, optsJson, cb, pv) {
           calls.process.push({ pin, pout, opts: JSON.parse(optsJson), pv });
           if (processThrows) throw new Error("python exploded");
@@ -53,13 +55,15 @@ function makeWorld({ failVersions = 0, failAll = false, processThrows = false, p
     },
     fetch: async (url) => {
       fetched.push(String(url));
-      if (String(url).startsWith("py/manifest.json")) return { ok: true, json: async () => ({ files: ["__init__.py", "web.py"], hash: "abc" }) };
+      if (String(url).startsWith("py/manifest.json")) {
+        return { ok: manifestStatus === 200, status: manifestStatus, json: async () => ({ files: ["__init__.py", "web.py"], hash: "abc" }) };
+      }
       return { ok: true, text: async () => "# python source for " + url };
     },
     console, TextEncoder, JSON, Object, Uint8Array, Error, String, Map,
   });
   vm.runInContext(source, ctx);
-  return { self, posted, fs_, imported, fetched, calls, send: (data) => self.onmessage({ data }) };
+  return { self, posted, fs_, imported, fetched, calls, writeOpts, send: (data) => self.onmessage({ data }) };
 }
 
 const types = (w) => w.posted.map((p) => p.m.type);
@@ -137,11 +141,40 @@ const types = (w) => w.posted.map((p) => p.m.type);
   assert.equal([...w.fs_.keys()].filter((k) => k.startsWith("/tmp/")).length, 0);
 }
 
+// 6b. the uploaded model is handed to the engine's file system without a copy
+{
+  const w = makeWorld();
+  await w.send({ type: "init" });
+  w.writeOpts.length = 0;
+  await w.send({ type: "run", id: 4, buffer: new ArrayBuffer(8), options: {} });
+  assert.equal(w.writeOpts[0] && w.writeOpts[0].canOwn, true);
+}
+
 // 7. a run before the engine is ready is refused politely
 {
   const w = makeWorld();
   await w.send({ type: "run", id: 1, buffer: new ArrayBuffer(4), options: {} });
   assert.equal(w.posted[0].m.type, "error");
+}
+
+// 8. the engine that fails its self-check is never announced as ready, and refuses runs
+{
+  const w = makeWorld({ selftest: { ok: false, error: "boom in numpy", detail: "Traceback..." } });
+  await w.send({ type: "init" });
+  assert.ok(!types(w).includes("ready"));
+  const fatal = w.posted.find((p) => p.m.type === "fatal");
+  assert.match(fatal.m.message, /self-check: boom in numpy/);
+  w.posted.length = 0;
+  await w.send({ type: "run", id: 2, buffer: new ArrayBuffer(4), options: {} });
+  assert.equal(w.posted[0].m.type, "error");
+}
+
+// 9. a missing manifest (wrong Pages folder, partial deploy) gives a message that names the file and the status
+{
+  const w = makeWorld({ manifestStatus: 404 });
+  await w.send({ type: "init" });
+  const fatal = w.posted.find((p) => p.m.type === "fatal");
+  assert.match(fatal.m.message, /py\/manifest\.json \(HTTP 404\).*docs/);
 }
 
 console.log("worker protocol: all checks passed");

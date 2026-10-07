@@ -67,7 +67,20 @@ def test_process_summary_is_the_cli_summary(wavy, tmp_path):
     meta, *_ = process(p, tmp_path)
     lines = []
     run([str(p), "--analyze"], out=lines.append)
-    assert meta["summary"] == lines[1:-1]  # minus the file line and the "Analyze only" line
+    cli_lines = lines[1:-1]  # minus the file line and the "Analyze only" line
+    # identical except that hints name the page's settings instead of command-line options
+    assert [x for x in meta["summary"] if "run again with" not in x] == [x for x in cli_lines if "run again with" not in x]
+    hint = [x for x in meta["summary"] if "run again with" in x]
+    assert hint and "Largest wobble" in hint[0] and "--max-range" not in hint[0]
+    assert not any("-v" in x.split() for x in meta["summary"])
+
+
+def test_web_summary_has_no_command_line_hints(tmp_path):
+    sc = scenes.two_level_panels(cell=2.0)
+    p = tmp_path / "m.stl"
+    stlio.write_stl(p, sc.mesh.to_triangles())
+    text = "\n".join(process(p, tmp_path, {"layer_height": 0.2, "max_range": 0.3})[0].get("summary", []))
+    assert "use -v" not in text and "--max-range" not in text
 
 
 def test_process_reports_progress_in_order(wavy, tmp_path):
@@ -192,3 +205,36 @@ def test_report_and_preview_agree_on_the_levels(wavy, tmp_path):
     meta, _ = preview.build_preview(sc.mesh, after, grid, res)
     v = meta["views"][0]
     assert v["before_layers"] == len(info["before_layers"]) and v["after_layers"] == len(info["after_layers"])
+
+
+def test_picture_limits_layer_edges_instead_of_exhausting_memory(wavy, tmp_path, monkeypatch):
+    p, _ = wavy
+    meta, *_ = process(p, tmp_path)
+    assert "edge_note" not in meta["preview"]["views"][0]
+    monkeypatch.setattr(preview, "MAX_EDGE_SEGMENTS", 50)
+    (tmp_path / "again").mkdir()
+    meta, _, pv, _ = process(p, tmp_path / "again")
+    view = meta["preview"]["views"][0]
+    assert "too many layer edges" in view["edge_note"]
+    assert meta["preview"]["files"]["top_before_segs"]["length"] == 0
+    assert meta["ok"] and meta["flattened"] == 1  # smoothing itself is unaffected
+
+
+def test_unexpected_errors_become_a_message_with_details(wavy, tmp_path, monkeypatch):
+    p, _ = wavy
+
+    def boom(*a, **k):
+        raise MemoryError("out of memory")
+
+    monkeypatch.setattr(web, "flatten", boom)
+    meta, out, *_ = process(p, tmp_path)
+    assert meta["ok"] is False and "MemoryError" in meta["error"] and "Traceback" in meta["detail"]
+    assert not out.exists()
+
+
+def test_file_errors_are_sentences(tmp_path):
+    p = tmp_path / "x.stl"
+    p.write_bytes(b"this is not an stl file")
+    meta, *_ = process(p, tmp_path)
+    assert meta["error"].startswith("That file could not be read: not a recognisable")
+    assert meta["error"].endswith("STL file?")

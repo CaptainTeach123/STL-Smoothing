@@ -14,7 +14,7 @@ from ._compat import bincount
 from .flatten import FlattenResult
 from .layers import LayerGrid
 from .mesh import Mesh
-from .slicing import contour_segments
+from .slicing import contour_segment_count, contour_segments
 from .summary import flattened_indices
 
 PALETTE = [
@@ -88,6 +88,10 @@ def describe_levels(levels: np.ndarray, what: str) -> str:
     return f"{what} end on {len(levels)} different layers ({levels[0]:.2f}–{levels[-1]:.2f} mm)"
 
 
+# Layer-edge segments drawn per picture.  Their number grows as 1 / layer height (a 200k-triangle model at
+# 0.01 mm layers would be 3 million), and building them costs about 300 bytes each.
+MAX_EDGE_SEGMENTS = 800_000
+
 VIEWS = (
     (1, "top", "Flattened top surfaces"),
     (-1, "bottom", "Flattened ceilings (seen from below)"),
@@ -147,7 +151,15 @@ def build_preview(before: Mesh, after: Mesh, grid: LayerGrid, res: FlattenResult
             shade = (255.0 * (0.40 + 0.35 * np.clip(sign * nz, 0, 1))).astype(np.uint8)
             level = np.full(F, 255, dtype=np.uint8)
             level[mask] = nearest_level(levels, np.round(grid.layer_end(zc[mask]), 6)).astype(np.uint8)
-            a, b, _ = contour_segments(mesh, grid, facing)
+            edge_faces = facing
+            if contour_segment_count(mesh, grid, edge_faces) > MAX_EDGE_SEGMENTS:
+                edge_faces = facing & mask  # too many at this layer height: only the flattened surfaces
+                view["edge_note"] = ("At this layer height there are too many layer edges to draw them all, "
+                                     "so only the ones on the flattened surfaces are shown.")
+            if contour_segment_count(mesh, grid, edge_faces) > MAX_EDGE_SEGMENTS:
+                edge_faces = np.zeros_like(facing)
+                view["edge_note"] = "At this layer height there are too many layer edges to draw them."
+            a, b, _ = contour_segments(mesh, grid, edge_faces)
             segs = np.concatenate([a[:, :2], b[:, :2]], axis=1).astype(np.float32)
             arrays[f"{key}_{name}_order"] = order
             arrays[f"{key}_{name}_shade"] = shade

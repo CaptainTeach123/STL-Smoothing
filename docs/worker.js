@@ -51,7 +51,11 @@ async function loadEngine() {
     errorCallback: (m) => post({ type: "status", text: m }),
   });
   post({ type: "status", text: "Loading the smoothing code…" });
-  const manifest = await (await fetch("py/manifest.json", { cache: "no-cache" })).json();
+  const manifestResponse = await fetch("py/manifest.json", { cache: "no-cache" });
+  if (!manifestResponse.ok) {
+    throw new Error(`Could not load py/manifest.json (HTTP ${manifestResponse.status}). Is the site being served from the docs/ folder?`);
+  }
+  const manifest = await manifestResponse.json();
   pyodide.FS.mkdirTree("/home/pyodide/stl_smoothing");
   for (const file of manifest.files) {
     const response = await fetch(`py/stl_smoothing/${file}?v=${manifest.hash}`);
@@ -59,7 +63,16 @@ async function loadEngine() {
     pyodide.FS.writeFile(`/home/pyodide/stl_smoothing/${file}`, await response.text());
   }
   pyodide.runPython('import sys\nif "/home/pyodide" not in sys.path:\n    sys.path.insert(0, "/home/pyodide")');
-  processFn = pyodide.pyimport("stl_smoothing.web").process;
+  const web = pyodide.pyimport("stl_smoothing.web");
+  // Smooth a small built-in model before announcing "ready", so a numpy/scipy problem in this
+  // browser engine is reported now and not on the first model a visitor tries.
+  post({ type: "status", text: "Checking the engine on a small built-in model…" });
+  const check = JSON.parse(web.selftest());
+  if (!check.ok) {
+    if (check.detail) console.error(check.detail);
+    throw new Error("The Python engine started but failed its self-check: " + check.error);
+  }
+  processFn = web.process;
   post({ type: "ready", python: pyodide.runPython("import sys; sys.version.split()[0]"), pyodide: engineVersion });
 }
 
@@ -84,7 +97,7 @@ function run(id, buffer, options) {
   const PV = "/tmp/preview";
   const written = [];
   try {
-    FS.writeFile(IN, new Uint8Array(buffer));
+    FS.writeFile(IN, new Uint8Array(buffer), { canOwn: true });  // hand the bytes over instead of copying them
     removeQuietly(OUT);
     const metaJson = processFn(IN, OUT, JSON.stringify(options || {}), (text) => post({ type: "progress", id, text }), PV);
     const meta = JSON.parse(metaJson);
