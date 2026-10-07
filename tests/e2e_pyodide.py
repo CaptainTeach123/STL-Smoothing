@@ -185,8 +185,8 @@ def main() -> int:
             assert frac > 0.999, "the browser result differs from the native result"
             native_lines = native["summary"]
             web_lines = summary.split("\n")
-            log("native summary:", *native_lines[:3], sep="\n  ")
-            log("browser summary:", *web_lines[:3], sep="\n  ")
+            log("native summary:\n  " + "\n  ".join(native_lines[:3]))
+            log("browser summary:\n  " + "\n  ".join(web_lines[:3]))
             assert web_lines[0] == native_lines[0], "summary heading differs"
             log("E2E OK")
         except Exception as exc:  # noqa: BLE001
