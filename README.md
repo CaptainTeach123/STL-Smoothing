@@ -22,7 +22,7 @@ the pumpkin are its dome shape and are supposed to be there.*
 The same tool runs as a web page: choose an STL, set your layer height, and download the
 smoothed file, with a before/after picture you can zoom. **Your model never leaves your
 computer**; the Python engine ([Pyodide](https://pyodide.org), Python compiled to WebAssembly)
-runs inside the page. The first visit downloads the engine (tens of MB), which the browser
+runs inside the page. The first visit downloads the engine (about 25 MB), which the browser
 then keeps.
 
 Once GitHub Pages is switched on (below) it lives at

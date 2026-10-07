@@ -45,7 +45,7 @@ async function startPyodide() {
 
 async function loadEngine() {
   await startPyodide();
-  post({ type: "status", text: "Loading numpy and scipy (a few tens of MB, cached by your browser after the first visit)…" });
+  post({ type: "status", text: "Loading numpy and scipy (the engine is about 25 MB in all, cached by your browser after the first visit)…" });
   await pyodide.loadPackage(["numpy", "scipy"], {
     messageCallback: (m) => post({ type: "status", text: m }),
     errorCallback: (m) => post({ type: "status", text: m }),
