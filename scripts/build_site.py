@@ -20,7 +20,7 @@ DEST = ROOT / "docs" / "py"
 
 # Everything web.py needs.  cli.py, report.py and __main__.py are command-line only.
 MODULES = [
-    "__init__.py", "stlio.py", "mesh.py", "layers.py", "slicing.py", "params.py",
+    "__init__.py", "stlio.py", "mesh.py", "layers.py", "slicing.py", "params.py", "_compat.py",
     "_detect.py", "_deform.py", "flatten.py", "summary.py", "preview.py", "web.py",
 ]
 

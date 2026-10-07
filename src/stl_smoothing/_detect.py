@@ -31,6 +31,7 @@ from scipy import sparse
 from scipy.ndimage import gaussian_filter1d
 from scipy.sparse import csgraph
 
+from ._compat import bincount, reduceat
 from .layers import LayerGrid
 from .mesh import Mesh
 from .params import Params
@@ -136,7 +137,7 @@ def plateau_levels(mesh, cl, accepted, comp_group, zc, area, soft, valid, glevel
     sel = (cl >= 0) & accepted[np.maximum(cl, 0)]
     if not sel.any():
         return clevel
-    carea = np.bincount(cl[sel], weights=area[sel], minlength=ncomp)
+    carea = bincount(cl[sel], weights=area[sel], minlength=ncomp)
     cmed = grouped_wmedian(cl[sel], zc[sel], area[sel], ncomp)
     clevel[accepted] = glevel_snap[comp_group[accepted]]  # default: the group level
     h = grid.layer_height
@@ -271,7 +272,7 @@ def find_windows(z: np.ndarray, w: np.ndarray, h: float, P: Params) -> list[dict
     z0 = float(z.min()) - pad * b
     nb = int(np.ceil((float(z.max()) - z0) / b)) + pad + 2
     idx = np.floor((z - z0) / b).astype(np.int64)
-    H = np.bincount(idx, weights=w, minlength=nb)
+    H = bincount(idx, weights=w, minlength=nb)
     S = gaussian_filter1d(H, sig, mode="constant")
     inner = np.arange(1, nb - 1)
     pk = inner[(S[inner] > S[inner - 1]) & (S[inner] >= S[inner + 1]) & (S[inner] > 1e-6 * S.max())]
@@ -376,8 +377,8 @@ def planar_ramps(topo, n, area, valid, P: Params) -> np.ndarray:
         keep = member[fa] & member[fb] & (key[fa] == key[fb])
         g = sparse.coo_matrix((np.ones(int(keep.sum()), dtype=np.int8), (fa[keep], fb[keep])), shape=(Fn, Fn))
         _, lab = csgraph.connected_components(g, directed=False)
-        parea = np.bincount(lab[member], weights=area[member], minlength=int(lab.max()) + 1)
-        pcount = np.bincount(lab[member], minlength=int(lab.max()) + 1)
+        parea = bincount(lab[member], weights=area[member], minlength=int(lab.max()) + 1)
+        pcount = bincount(lab[member], minlength=int(lab.max()) + 1)
         out |= member & (parea[lab] >= P.planar_min_area) & (pcount[lab] >= P.planar_min_faces)
     return out
 
@@ -395,7 +396,7 @@ def boundary_stats(topo, area, valid, soft, grp, cl, ncomp, gsign, ignore=None, 
     plateau is the shoulder of a ramp or skirt, not noise fading into the plateau.
     """
     sel = cl >= 0
-    carea = np.bincount(cl[sel], weights=area[sel], minlength=ncomp)
+    carea = bincount(cl[sel], weights=area[sel], minlength=ncomp)
     comp_g = np.zeros(ncomp, dtype=np.int64)
     comp_g[cl[sel]] = grp[sel]
     sgn_c = gsign[comp_g]
@@ -455,7 +456,7 @@ def fillable_holes(grp, is_core_f, topo, F, area, zc, gsign, soft, exact, ramp, 
         if not holes.any():
             continue
         nh, hl = components(topo, holes)
-        harea = np.bincount(hl[holes], weights=area[holes], minlength=nh)
+        harea = bincount(hl[holes], weights=area[holes], minlength=nh)
         ph, pg_, pcore = [], [], []
         for A_, B_ in ((fa, fb), (fb, fa)):
             m = holes[A_] & ~holes[B_]
@@ -479,7 +480,7 @@ def fillable_holes(grp, is_core_f, topo, F, area, zc, gsign, soft, exact, ramp, 
             key = ph[okp] * np.int64(G + 1) + pg_[okp]
             uk = np.unique(key)
             uh, ug = uk // (G + 1), uk % (G + 1)
-            multi = np.bincount(uh, minlength=nh) > 1
+            multi = bincount(uh, minlength=nh) > 1
             hgroup[uh] = ug
         hz_lo = np.full(nh, np.inf)
         hz_hi = np.full(nh, -np.inf)
@@ -598,8 +599,8 @@ def analyse(mesh: Mesh, grid: LayerGrid, P: Params) -> Analysis:
         ne, el = components(topo, mem)
         base = len(ex_sign)
         exact_label[mem] = el[mem] + base
-        ca = np.bincount(el[mem], weights=area[mem], minlength=ne)
-        cz = np.bincount(el[mem], weights=(area * zc)[mem], minlength=ne) / np.maximum(ca, 1e-12)
+        ca = bincount(el[mem], weights=area[mem], minlength=ne)
+        cz = bincount(el[mem], weights=(area * zc)[mem], minlength=ne) / np.maximum(ca, 1e-12)
         ex_sign.extend([s] * ne)
         ex_area.extend(ca.tolist())
         ex_z.extend(cz.tolist())
@@ -722,12 +723,12 @@ def analyse(mesh: Mesh, grid: LayerGrid, P: Params) -> Analysis:
         gs = gid[o]
         starts = np.flatnonzero(np.r_[True, gs[1:] != gs[:-1]])
         ug = gs[starts]
-        gmin = np.minimum.reduceat(fz.min(1)[o], starts)
-        gmax = np.maximum.reduceat(fz.max(1)[o], starts)
+        gmin = reduceat(np.minimum, fz.min(1)[o], starts)
+        gmax = reduceat(np.maximum, fz.max(1)[o], starts)
         mg = P.plane_margin * grid.layer_height + 1e-6
         one = grid.layer_number(gmin - mg) == grid.layer_number(gmax + mg)
         if one.any():
-            garea = np.bincount(gid, weights=area[live0], minlength=G)
+            garea = bincount(gid, weights=area[live0], minlength=G)
             gmed = grouped_wmedian(gid, zc[live0], area[live0], G)
             for g in ug[one].tolist():
                 already.append((int(gsign[g]), float(gmed[g]), float(garea[g])))

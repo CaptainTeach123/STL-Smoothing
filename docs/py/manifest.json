@@ -6,6 +6,7 @@
     "layers.py",
     "slicing.py",
     "params.py",
+    "_compat.py",
     "_detect.py",
     "_deform.py",
     "flatten.py",
@@ -13,5 +14,5 @@
     "preview.py",
     "web.py"
   ],
-  "hash": "558cea8a4f14"
+  "hash": "95f8d532664d"
 }

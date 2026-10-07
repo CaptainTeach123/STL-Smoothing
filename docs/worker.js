@@ -12,8 +12,8 @@
 */
 "use strict";
 
-// Tried in order: the first that loads wins. All ship numpy and scipy.
-const PYODIDE_VERSIONS = ["0.27.7", "0.27.5", "0.26.4"];
+// Tried in order: the first that loads wins. Both ship numpy 2 and scipy; numpy 1 engines are left out because the code has not been run on them.
+const PYODIDE_VERSIONS = ["0.27.7", "0.27.5"];
 const CDN = "https://cdn.jsdelivr.net/pyodide/";
 
 let pyodide = null;

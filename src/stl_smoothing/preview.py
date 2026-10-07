@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from ._compat import bincount
 from .flatten import FlattenResult
 from .layers import LayerGrid
 from .mesh import Mesh
@@ -67,7 +68,7 @@ def region_levels(mesh: Mesh, grid: LayerGrid, faces: np.ndarray, min_frac: floa
     zc = mesh.face_centroids()[:, 2]
     ends = np.round(grid.layer_end(zc[faces]), 6)
     ids, inv = np.unique(ends, return_inverse=True)
-    w = np.bincount(inv, weights=area[faces])
+    w = bincount(inv, weights=area[faces])
     return ids[w > min_frac * w.sum()]
 
 

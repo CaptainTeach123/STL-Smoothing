@@ -13,6 +13,7 @@ import numpy as np
 from scipy import sparse
 from scipy.sparse import csgraph
 
+from ._compat import bincount, reduceat
 from ._detect import Analysis
 from .layers import LayerGrid
 from .mesh import Mesh
@@ -38,7 +39,7 @@ def vertex_targets(mesh: Mesh, grid: LayerGrid, A: Analysis, P: Params) -> np.nd
         gg = np.repeat(pc[f_acc], 3)
         ww = np.repeat(area[f_acc], 3)
         uk, inv = np.unique(vv * np.int64(G) + gg, return_inverse=True)
-        wsum = np.bincount(inv, weights=ww)
+        wsum = bincount(inv, weights=ww)
         uv, ug = uk // G, uk % G
         order = np.lexsort((wsum, uv))  # per vertex, the heaviest patch last
         uv_s, ug_s = uv[order], ug[order]
@@ -89,9 +90,9 @@ def _absorb_spikes(mesh: Mesh, tgt: np.ndarray, P: Params) -> np.ndarray:
     nb_min = np.full(V, np.inf)
     nb_max = np.full(V, -np.inf)
     nb_free = np.zeros(V)
-    nb_min[ne] = np.minimum.reduceat(np.where(pinned, tgt, np.inf)[indices], starts)
-    nb_max[ne] = np.maximum.reduceat(np.where(pinned, tgt, -np.inf)[indices], starts)
-    nb_free[ne] = np.add.reduceat((~pinned)[indices].astype(np.float64), starts)
+    nb_min[ne] = reduceat(np.minimum, np.where(pinned, tgt, np.inf)[indices], starts)
+    nb_max[ne] = reduceat(np.maximum, np.where(pinned, tgt, -np.inf)[indices], starts)
+    nb_free[ne] = reduceat(np.add, (~pinned)[indices].astype(np.float64), starts)
     z = mesh.verts[:, 2]
     spike = (
         ~pinned & ne & (nb_free == 0) & (nb_min == nb_max) & (np.abs(z - nb_min) <= P.spike_max)
@@ -135,7 +136,7 @@ def feather(mesh: Mesh, A: Analysis, dz: np.ndarray, pinned: np.ndarray, bed_v: 
     key, lo, hi, fsoft = key[order], lo[order], hi[order], fsoft[order]
     first = np.r_[True, key[1:] != key[:-1]]
     starts = np.flatnonzero(first)
-    soft_edge = np.logical_or.reduceat(fsoft, starts)
+    soft_edge = reduceat(np.logical_or, fsoft, starts)
     lo, hi = lo[starts], hi[starts]
     L = np.linalg.norm(mesh.verts[lo] - mesh.verts[hi], axis=1)
     L = np.maximum(L, 1e-9) * np.where(soft_edge, 1.0, P.steep_cost)

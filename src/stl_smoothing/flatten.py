@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from ._compat import bincount
 from ._deform import exact_needs_snap, feather, repair_flips, unfold, vertex_targets
 from ._detect import Analysis, analyse, components, wmedian, grouped_wmedian
 from .layers import LayerGrid
@@ -130,7 +131,7 @@ def flatten(mesh: Mesh, grid: LayerGrid | None = None, params: Params | None = N
 def _layer_count(grid: LayerGrid, zc: np.ndarray, w: np.ndarray, min_frac: float = 0.005) -> int:
     ends = np.round(grid.layer_end(zc), 6)
     ids, inv = np.unique(ends, return_inverse=True)
-    mass = np.bincount(inv, weights=w)
+    mass = bincount(inv, weights=w)
     return int((mass > min_frac * mass.sum()).sum())
 
 
@@ -138,7 +139,7 @@ def _grouped_percentiles(kid, vals, K, qs):
     """np.percentile(vals[kid == k], qs) (linear) for every k, vectorised.  kid in 0..K-1, every k non-empty."""
     o = np.lexsort((vals, kid))
     v = vals[o]
-    cnt = np.bincount(kid, minlength=K)
+    cnt = bincount(kid, minlength=K)
     start = np.cumsum(cnt) - cnt
     out = []
     for q in qs:
@@ -180,7 +181,7 @@ def _describe(res: FlattenResult, work: Mesh, grid: LayerGrid, A: Analysis, P: P
         k_level = lv_s[new]
         area = A.area[fi]
         zc = A.zc[fi]
-        k_area = np.bincount(kid, weights=area, minlength=K)
+        k_area = bincount(kid, weights=area, minlength=K)
         # robust z extent over the UNIQUE vertices of each group
         V = work.n_verts
         pk = np.unique(np.repeat(kid, 3) * np.int64(V) + faces[fi].ravel())
@@ -189,12 +190,12 @@ def _describe(res: FlattenResult, work: Mesh, grid: LayerGrid, A: Analysis, P: P
         # number of patches
         ncomp_total = int(pc.max()) + 1
         pcm = np.unique(kid * np.int64(ncomp_total) + pc[fi])
-        k_ncomp = np.bincount(pcm // ncomp_total, minlength=K)
+        k_ncomp = bincount(pcm // ncomp_total, minlength=K)
         k_med = grouped_wmedian(kid, zc, area, K)
         # layers before: distinct layer ends carrying > 0.5 % of the group's area
         ends = np.round(grid.layer_end(zc), 6)
         ue, einv = np.unique(ends, return_inverse=True)
-        mass = np.bincount(kid * np.int64(len(ue)) + einv, weights=area, minlength=K * len(ue)).reshape(K, len(ue))
+        mass = bincount(kid * np.int64(len(ue)) + einv, weights=area, minlength=K * len(ue)).reshape(K, len(ue))
         k_layers = (mass > 0.005 * mass.sum(axis=1, keepdims=True)).sum(axis=1)
         base = len(res.plateaus)
         res.face_plateau[fi] = base + kid
