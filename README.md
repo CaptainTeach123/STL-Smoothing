@@ -2,6 +2,11 @@
 
 Remove **strangely offset layer lines** from generated STL models.
 
+### ▶ [Open the app in your browser](https://captainteach123.github.io/STL-Smoothing/)
+
+Nothing to install: pick your STL, enter your layer height, download the fixed file. (Needs GitHub
+Pages switched on for this repository, see [Use it in your browser](#use-it-in-your-browser-no-install).)
+
 Generated models (reliefs, lithophanes, SDF / marching-cubes output, AI meshes) often
 contain surfaces that are *meant to be flat* but wobble by a fraction of a millimetre.
 A slicer cuts such a surface at every layer it wanders through, so the printed top is
@@ -25,18 +30,27 @@ computer**; the Python engine ([Pyodide](https://pyodide.org), Python compiled t
 runs inside the page. The first visit downloads the engine (about 25 MB), which the browser
 then keeps.
 
+**How to use the page:** 1. choose your STL file (or drag it onto the box), 2. enter the layer
+height from your slicer (0.2 is the default), 3. press **Smooth the model**, look at the before/after
+picture, and press **Download the smoothed STL**. The button stays grey until the engine has
+started (a few seconds the first time) and a file is chosen.
+
 Once GitHub Pages is switched on (below) it lives at
 `https://<your-user>.github.io/STL-Smoothing/`, for example
-<https://captainteach123.github.io/STL-Smoothing/>.
+<https://captainteach123.github.io/STL-Smoothing/>. The repository page itself
+(`github.com/<your-user>/STL-Smoothing`) only shows the code and this text; the app is the other address.
 
-To switch it on: **Settings -> Pages -> Build and deployment -> Source: "Deploy from a
-branch"**, pick the branch you want to publish (your default branch; `main` if you have one)
-and the folder **`/docs`**, then Save. The first deploy takes a minute or two. GitHub Pages
-needs a public repository on a free plan. The site is plain files in `docs/` (no build step on
-GitHub), so it also works from any static host or from `python -m http.server --directory docs`
-(open it at `http://localhost:8000/`; browsers will not run the engine from a `file://` page).
-With "Deploy from a branch" every push to that branch goes live, so publish a branch whose CI
-(see below) is green.
+How it gets published: **Settings -> Pages -> Build and deployment -> Source: "GitHub Actions"**.
+The workflow in `.github/workflows/site.yml` then publishes the `docs/` folder, exactly as committed,
+every time a push to the default branch passes all the tests (including the real engine in a browser);
+the Actions tab shows the run, and the Pages settings screen shows the address with a "Visit site"
+button. Do not add GitHub's suggested *Jekyll* workflow: it would publish this README as the home
+page instead of the app, and Jekyll drops the engine's `_detect.py` / `_deform.py` modules.
+The alternative, "Deploy from a branch" with the folder `/docs` (or `/ (root)`, whose `index.html`
+forwards to `docs/`), also works but publishes every push, tests or not. GitHub Pages needs a
+public repository on a free plan. The site is plain files, so it also works from any static host
+or from `python -m http.server --directory docs` (open it at `http://localhost:8000/`; browsers
+will not run the engine from a `file://` page).
 
 Limits of the web version: a browser tab has less memory than a terminal, so use the command
 line for very large models. It writes binary STL, and it draws the before/after picture only

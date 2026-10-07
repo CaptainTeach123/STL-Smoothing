@@ -669,3 +669,47 @@ def test_a_missing_layer_edge_note_is_shown_when_the_engine_capped_the_edges(bro
     run_model(page, payload["model"])
     assert "too many layer edges" in page.inner_text("figure.view")
     ctx.close()
+
+
+# ------------------------------------------- "how do I use it?": where a visitor lands, and what the page says
+@pytest.fixture(scope="module")
+def root_site():
+    """The whole repository served from its root, like GitHub Pages set to '/ (root)'."""
+    handler = functools.partial(_Quiet, directory=str(ROOT))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_address[1]}/"
+    server.shutdown()
+
+
+@pytest.mark.parametrize("javascript", [True, False])
+def test_the_repository_root_forwards_to_the_app(browser, root_site, javascript):
+    ctx = browser.new_context(java_script_enabled=javascript)
+    page = ctx.new_page()
+    page.goto(root_site)
+    page.wait_for_url("**/docs/", timeout=10000)
+    assert page.title() == "STL Smoothing"
+    assert page.locator("#form").count() == 1
+    ctx.close()
+
+
+def test_the_page_tells_a_new_visitor_what_to_do(browser, site, payload):
+    page, ctx, _ = open_page(browser, site, payload)
+    ready(page)
+    steps = page.locator("ol.steps li")
+    assert steps.count() == 3
+    assert "Choose your STL file" in steps.nth(0).inner_text()
+    assert page.is_disabled("#run")
+    assert "Choose an STL file above" in page.inner_text("#run-hint"), "a grey button says why"
+    assert page.get_attribute("#run", "aria-describedby") == "run-hint"
+    page.set_input_files("#file", str(payload["model"]))
+    assert page.is_enabled("#run") and page.inner_text("#run-hint") == ""
+    ctx.close()
+
+
+def test_the_run_hint_explains_a_dead_engine(browser, site, payload):
+    page, ctx, _ = open_page(browser, site, payload, mode={"fatal": "Could not download the Python engine"})
+    page.wait_for_function("document.getElementById('engine').dataset.state === 'error'")
+    page.set_input_files("#file", str(payload["model"]))
+    assert "could not start" in page.inner_text("#run-hint")
+    ctx.close()

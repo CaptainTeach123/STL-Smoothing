@@ -1,7 +1,12 @@
 name: site
 
-# Tests the package and the browser app. The "browser engine" job runs the REAL Python engine
-# (Pyodide, downloaded from the jsDelivr CDN) in headless Chromium, which cannot be done offline.
+# Tests the package and the browser app, then publishes docs/ to GitHub Pages (job "deploy").
+# The "browser engine" job runs the REAL Python engine (Pyodide, downloaded from the jsDelivr CDN)
+# in headless Chromium, which cannot be done offline.
+#
+# Publishing: Settings -> Pages -> Source must be "GitHub Actions". The site is the docs/ folder
+# exactly as committed (no Jekyll: Jekyll would drop docs/py/stl_smoothing/_detect.py and
+# _deform.py and the engine could not load). It goes live only after every test job is green.
 on:
   push:
   pull_request:
@@ -10,10 +15,10 @@ on:
 permissions:
   contents: read
 
-# a newer push to the same branch replaces a run that is still going
+# one run per branch at a time; a newer push waits instead of cancelling a deployment half-way
 concurrency:
   group: site-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   tests:
@@ -69,6 +74,30 @@ jobs:
           name: e2e-output
           path: e2e-out
           retention-days: 14
+
+  # Publish docs/ as the GitHub Pages site, after the tests above have passed, for pushes to the
+  # default branch (and manual runs from the Actions tab).
+  deploy:
+    name: publish to GitHub Pages
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+    needs: [tests, browser-ui, browser-engine]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deployment
+        uses: actions/deploy-pages@v5
 
   # Informational: how big a model the real engine can take in a browser tab. Runs on manual dispatch or
   # when the commit message contains [large]; a failure here does not fail the workflow.

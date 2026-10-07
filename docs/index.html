@@ -33,6 +33,12 @@
       <h2 id="try">Try it on your model</h2>
       <p class="privacy"><strong>Private by design:</strong> your file is processed on this page and is never uploaded anywhere. (The Python engine itself, <a href="https://pyodide.org">Pyodide</a>, is third-party code that this page downloads from the jsDelivr CDN.)</p>
 
+      <ol class="steps">
+        <li>Choose your STL file.</li>
+        <li>Enter the layer height from your slicer.</li>
+        <li>Press <strong>Smooth the model</strong>, check the picture, and download the new STL.</li>
+      </ol>
+
       <div id="engine" class="engine" data-state="loading" role="status" aria-live="polite">
         <span class="dot" aria-hidden="true"></span>
         <span id="engine-text">Starting the Python engine… the first visit downloads the engine (about 25 MB), which your browser then keeps.</span>
@@ -80,10 +86,11 @@
         </details>
 
         <div class="actions">
-          <button type="submit" id="run" class="primary" disabled>Smooth the model</button>
+          <button type="submit" id="run" class="primary" disabled aria-describedby="run-hint">Smooth the model</button>
           <button type="button" id="cancel" hidden>Cancel</button>
           <span id="status" class="status" role="status" aria-live="polite"></span>
           <span id="elapsed" class="status" aria-hidden="true"></span>
+          <span id="run-hint" class="status"></span>
         </div>
         <div id="error" class="alert" role="alert" hidden></div>
       </form>

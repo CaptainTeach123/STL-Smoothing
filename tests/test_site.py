@@ -87,3 +87,12 @@ def test_worker_protocol_under_node():
     r = subprocess.run([node, str(ROOT / "tests" / "web" / "worker_protocol.mjs")], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "all checks passed" in r.stdout
+
+
+def test_publishing_from_the_repository_root_also_reaches_the_app():
+    """If Pages is set to '/ (root)' instead of '/docs', a visitor must land on the app, not on the README."""
+    html = (ROOT / "index.html").read_text()
+    assert 'http-equiv="refresh" content="0; url=docs/"' in html  # works even with JavaScript off
+    assert 'location.replace("docs/")' in html and 'href="docs/"' in html
+    assert (ROOT / ".nojekyll").exists(), "Jekyll would drop the underscore modules from docs/py when publishing the root"
+    assert (DOCS / "index.html").exists()

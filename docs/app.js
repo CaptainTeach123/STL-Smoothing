@@ -9,7 +9,7 @@
     engine: $("engine"), engineText: $("engine-text"), form: $("form"), file: $("file"), drop: $("drop"),
     dropTitle: $("drop-title"), fileInfo: $("file-info"), layer: $("layer"), first: $("first"), range: $("range"),
     area: $("area"), snap: $("snap"), run: $("run"), cancel: $("cancel"), status: $("status"), elapsed: $("elapsed"),
-    error: $("error"), advanced: document.querySelector("details.advanced"),
+    error: $("error"), runHint: $("run-hint"), advanced: document.querySelector("details.advanced"),
     results: $("results"), stats: $("stats"), notes: $("notes"), download: $("download"),
     downloadNote: $("download-note"), figures: $("figures"), summary: $("summary"),
   };
@@ -92,6 +92,7 @@
         break;
       case "fatal":
         setEngine("error", msg.message);
+        updateRunButton();
         break;
       case "progress":
         if (msg.id === state.requestId) {
@@ -114,6 +115,14 @@
   // ------------------------------------------------------------------- form
   function updateRunButton() {
     els.run.disabled = !(state.engineReady && state.file && !state.busy);
+    // say why the button is grey, so it never looks broken
+    var hint = "";
+    if (!state.busy && els.run.disabled) {
+      if (els.engine.dataset.state === "error") hint = "The engine could not start, see the message above.";
+      else if (!state.file) hint = state.engineReady ? "Choose an STL file above to continue." : "Choose an STL file above; the engine is still starting.";
+      else hint = "Waiting for the engine to start…";
+    }
+    els.runHint.textContent = hint;
   }
 
   function showError(text, detail) {
@@ -726,6 +735,8 @@
     var saved = parseFloat(localStorage.getItem("stl-smoothing-layer"));
     if (isFinite(saved) && saved >= 0.005 && saved <= 5) els.layer.value = String(saved);
   } catch (_) { /* ignore */ }
+
+  updateRunButton();
 
   // expose a tiny hook for automated tests
   window.__stlSmoothing = { state: state };
