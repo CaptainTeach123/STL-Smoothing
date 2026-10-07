@@ -14,7 +14,7 @@ every request the page made was a GET to this server or the engine CDN, and none
 Environment:
   E2E_OUT     directory for screenshots, logs and the downloaded STLs (default e2e-out)
   E2E_SIZES   comma-separated grid cell sizes in mm of the generated model; smaller = more triangles
-              (0.6 -> 111k triangles, 0.3 -> 445k, 0.2 -> 1.0M, 0.165 -> 1.46M).  Default 0.6.
+              (0.6 -> 111k triangles, 0.3 -> 445k, 0.2 -> 1.0M, 0.165 -> 1.46M, 0.12 -> 2.7M).  Default 0.6.
   E2E_EXTRAS  "0" skips the bad-file and small-model checks (the large-model job uses this)
 """
 
@@ -37,6 +37,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 import scenes  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
 from stl_smoothing import stlio, web  # noqa: E402
+from stl_smoothing.preview import MAX_PREVIEW_FACES as web_preview_limit  # noqa: E402
 
 OUT = Path(os.environ.get("E2E_OUT", "e2e-out")).resolve()
 OUT.mkdir(parents=True, exist_ok=True)
@@ -177,7 +178,8 @@ def exercise(p, url: str, cell: float, first: bool, requests: list) -> None:
             page.click("#run")
             took = wait_for_result(page, tag)
             log(f"[{tag}] processed in the browser in {took:.1f} s (native {native_s:.1f} s)")
-            wait_drawn(page, tag)
+            if n_tri <= web_preview_limit:
+                wait_drawn(page, tag)
             page.screenshot(path=str(OUT / f"02_result_{tag}.png"), full_page=True)
             stats = page.inner_text("#stats")
             summary = page.inner_text("#summary")
@@ -189,15 +191,22 @@ def exercise(p, url: str, cell: float, first: bool, requests: list) -> None:
             dl.value.save_as(str(web_out))
             assert dl.value.suggested_filename == f"e2e_model_{tag}_smoothed.stl", dl.value.suggested_filename
 
-            # ---- the picture was drawn: both canvases have pixels, and the wobble's layer edges are gone
-            # (the dome keeps its own rings in both pictures, so "after" is lower, not zero)
-            (bo, be), (ao, ae) = edge_pixels(page, 0), edge_pixels(page, 1)
-            log(f"[{tag}] picture pixels: before opaque={bo} edge={be}; after opaque={ao} edge={ae}")
-            assert bo > 5000 and ao > 5000 and be > 0
-            # With this scene the wobbling panels' edges disappear and the dome's rings stay, so the 'after'
-            # picture keeps about 89 % of the edge pixels (3155 of 3560 in the first real run).  The band is
-            # wide enough for anti-aliasing differences between browsers and tight enough to notice a wrong picture.
-            assert 0.80 * be <= ae <= 0.95 * be, f"unexpected share of layer-edge pixels after smoothing ({ae} of {be})"
+            # ---- the picture was drawn (models above the preview limit get no picture, by design)
+            if n_tri > web_preview_limit:
+                assert page.locator("figure.view").count() == 0 and "too large for the picture" in page.inner_text("#results")
+                log(f"[{tag}] no picture, as expected above {web_preview_limit:,} triangles")
+            else:
+                (bo, be), (ao, ae) = edge_pixels(page, 0), edge_pixels(page, 1)
+                log(f"[{tag}] picture pixels: before opaque={bo} edge={be}; after opaque={ao} edge={ae}")
+                assert bo > 5000 and ao > 5000 and be > 0
+                if abs(cell - 0.6) < 1e-9:
+                    # With this scene the wobbling panels' edges disappear and the dome's rings stay, so the
+                    # 'after' picture keeps about 89 % of the edge pixels (3155 of 3560 in the first real run).
+                    # The band is wide enough for anti-aliasing differences between browsers and tight enough
+                    # to notice a wrong picture.  (Finer meshes draw thinner lines, so the share differs there.)
+                    assert 0.80 * be <= ae <= 0.95 * be, f"unexpected share of layer-edge pixels after smoothing ({ae} of {be})"
+                else:
+                    assert ae <= be, f"the 'after' picture must not have more layer edges than 'before' ({ae} vs {be})"
 
             # ---- same answer as the native code
             a = stlio.read_stl(native_out).tris

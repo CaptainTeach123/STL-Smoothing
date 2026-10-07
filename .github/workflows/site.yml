@@ -85,10 +85,10 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev,webtest]"
       - run: python -m playwright install --with-deps chromium
-      - name: Real-engine test with 445k, 1.0M and 1.46M triangles
+      - name: Real-engine test with 445k to 3.9M triangles
         env:
           E2E_OUT: e2e-large-out
-          E2E_SIZES: "0.3,0.2,0.165"
+          E2E_SIZES: "0.3,0.2,0.165,0.12,0.1"
           E2E_EXTRAS: "0"
         run: python tests/e2e_pyodide.py
       - name: Keep the log and screenshots
