@@ -15,6 +15,7 @@ import functools
 import http.server
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -33,7 +34,7 @@ from stl_smoothing import stlio, web  # noqa: E402
 OUT = Path(os.environ.get("E2E_OUT", "e2e-out")).resolve()
 OUT.mkdir(parents=True, exist_ok=True)
 ENGINE_TIMEOUT_MS = 10 * 60 * 1000
-RUN_TIMEOUT_MS = 15 * 60 * 1000
+RUN_TIMEOUT_S = 8 * 60
 log_lines = []
 
 
@@ -41,6 +42,32 @@ def log(*a):
     line = " ".join(str(x) for x in a)
     print(line, flush=True)
     log_lines.append(line)
+
+
+def wait_for_result(page, label: str) -> float:
+    """Wait for the result card, logging every change of the page's status line (stage by stage),
+    so a stall shows where it happened.  Returns the seconds taken; raises on error or timeout."""
+    t0 = time.time()
+    last = None
+    while True:
+        state = page.evaluate(
+            """() => ({status: document.getElementById('status').textContent.trim(),
+                       error: document.getElementById('error').hidden ? '' : document.getElementById('error').textContent.trim(),
+                       results: !document.getElementById('results').hidden,
+                       busy: document.getElementById('run').disabled})""")
+        state["status"] = re.sub(r" \(\d+ s\)$", "", state["status"])  # the page appends a running timer
+        key = (state["status"], state["error"], state["results"], state["busy"])
+        if key != last:
+            log(f"  [{label} +{time.time() - t0:5.1f}s] status={state['status']!r} busy={state['busy']} "
+                f"results={state['results']} error={state['error']!r}")
+            last = key
+        if state["error"]:
+            raise AssertionError(f"{label}: the page reported an error: {state['error']}")
+        if state["results"]:
+            return time.time() - t0
+        if time.time() - t0 > RUN_TIMEOUT_S:
+            raise TimeoutError(f"{label}: no result after {RUN_TIMEOUT_S} s (last status {state['status']!r})")
+        page.wait_for_timeout(1000)
 
 
 class Quiet(http.server.SimpleHTTPRequestHandler):
@@ -104,12 +131,26 @@ def main() -> int:
             log("bad file ->", msg)
             assert "not a recognisable" in msg, msg
 
+            # ---- a small model first: tells "the engine is slow" from "the engine is stuck"
+            small_scene = scenes.panel_with_dome(cell=2.4, ptp=1.2, jitter=0.2)
+            small = OUT / "e2e_small.stl"
+            stlio.write_stl(small, small_scene.mesh.to_triangles(), header="e2e small model")
+            small_native = json.loads(web.process(str(small), str(OUT / "small_native_out.stl"), json.dumps({"layer_height": 0.2})))
+            log(f"small model: {small_scene.mesh.n_faces:,} triangles; native flattened={small_native['flattened']} "
+                f"moved={small_native['n_moved']}")
+            page.set_input_files("#file", str(small))
+            page.click("#run")
+            took = wait_for_result(page, "small")
+            log(f"small model processed in the browser in {took:.1f} s")
+            small_stats = page.inner_text("#stats")
+            log("small stats:", small_stats.replace("\n", " | "))
+            page.screenshot(path=str(OUT / "02a_small_result.png"), full_page=True)
+
             # ---- the real model
             page.set_input_files("#file", str(model))
-            t1 = time.time()
             page.click("#run")
-            page.wait_for_selector("#results:not([hidden])", timeout=RUN_TIMEOUT_MS)
-            log(f"processed in the browser in {time.time() - t1:.1f} s")
+            took = wait_for_result(page, "large")
+            log(f"processed in the browser in {took:.1f} s")
             page.wait_for_timeout(1500)
             page.screenshot(path=str(OUT / "02_result.png"), full_page=True)
             stats = page.inner_text("#stats")
