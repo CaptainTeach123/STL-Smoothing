@@ -1,0 +1,62 @@
+name: site
+
+# Tests the package and the browser app. The "browser engine" job runs the REAL Python engine
+# (Pyodide, downloaded from the jsDelivr CDN) in headless Chromium, which cannot be done offline.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[dev]"
+      - run: pytest
+
+  browser-ui:
+    name: browser UI tests (stub engine)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev,webtest]"
+      - run: python -m playwright install --with-deps chromium
+      - run: pytest tests/test_web_ui.py tests/test_site.py -v
+
+  browser-engine:
+    name: browser engine (real Pyodide)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev,webtest]"
+      - run: python -m playwright install --with-deps chromium
+      - name: Real-engine end-to-end test
+        env:
+          E2E_OUT: e2e-out
+        run: python tests/e2e_pyodide.py
+      - name: Keep the screenshots, log and files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-output
+          path: e2e-out
+          retention-days: 14

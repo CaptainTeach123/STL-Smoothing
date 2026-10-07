@@ -16,6 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 report = ["matplotlib>=3.5"]
 dev = ["pytest>=7", "matplotlib>=3.5"]
+webtest = ["playwright>=1.40"]
 
 [project.scripts]
 stl-smoothing = "stl_smoothing.cli:main"

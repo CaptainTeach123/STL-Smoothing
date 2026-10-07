@@ -14,6 +14,7 @@ import numpy as np
 
 from .layers import LayerGrid
 from .mesh import Mesh
+from .preview import EDGE_COLOUR, describe_levels, level_colours, nearest_level, region_levels
 from .slicing import contour_segments
 
 
@@ -31,50 +32,6 @@ def _import_mpl():
             "Rendering reports needs matplotlib: pip install 'stl-smoothing[report]'"
         ) from exc
     return plt, LineCollection, PolyCollection, Patch, Line2D
-
-
-def region_layers(mesh: Mesh, grid: LayerGrid, faces: np.ndarray, min_frac: float = 0.005):
-    """Layer ends (sorted) that the selected faces occupy, ignoring slivers."""
-    if not faces.any():
-        return np.zeros(0)
-    _, area = mesh.face_normals_areas()
-    zc = mesh.face_centroids()[:, 2]
-    ends = np.round(grid.layer_end(zc[faces]), 6)
-    ids, inv = np.unique(ends, return_inverse=True)
-    w = np.bincount(inv, weights=area[faces])
-    return ids[w > min_frac * w.sum()]
-
-
-def _level_colours(levels: np.ndarray, final: np.ndarray) -> dict:
-    """Blue (lower) -> pale blue (the final level) -> peach -> red (higher)."""
-    from matplotlib.colors import LinearSegmentedColormap
-
-    cmap = LinearSegmentedColormap.from_list(
-        "layers",
-        [(0.0, "#4b63d1"), (0.2, "#8aa6f2"), (0.4, "#c4d3f5"), (0.55, "#f2d3c4"), (0.75, "#e8826a"), (1.0, "#b8232f")],
-    )
-    n = len(levels)
-    if n == 0:
-        return {}
-    ref = int(np.argmin(np.abs(levels - (float(np.median(final)) if len(final) else float(np.median(levels))))))
-    out = {}
-    for i, lv in enumerate(levels):
-        if i == ref:
-            t = 0.4
-        elif i < ref:
-            t = 0.4 * i / ref
-        else:
-            t = 0.4 + 0.6 * (i - ref) / max(n - 1 - ref, 1)
-        out[lv] = cmap(t)
-    return out
-
-
-def _describe(levels: np.ndarray, what: str) -> str:
-    if len(levels) == 0:
-        return f"No {what} found"
-    if len(levels) == 1:
-        return f"{what} end on one layer ({levels[0]:.2f} mm)"
-    return f"{what} end on {len(levels)} different layers ({levels[0]:.2f}–{levels[-1]:.2f} mm)"
 
 
 def render_comparison(
@@ -99,10 +56,12 @@ def render_comparison(
     """
     plt, LineCollection, PolyCollection, Patch, Line2D = _import_mpl()
     sign = 1.0 if view == "top" else -1.0
-    lv_before = region_layers(before, grid, region)
-    lv_after = region_layers(after, grid, region)
+    lv_before = region_levels(before, grid, region)
+    lv_after = region_levels(after, grid, region)
     all_levels = np.unique(np.concatenate([lv_before, lv_after]))
-    colour_of = _level_colours(all_levels, lv_after)
+    from matplotlib.colors import to_rgba
+
+    colour_of = {lv: to_rgba(c) for lv, c in level_colours(all_levels, lv_after).items()}
     lo, hi = before.verts[:, :2].min(0), before.verts[:, :2].max(0)
     span = np.maximum(hi - lo, 1e-9)
     fig_h = 7.0
@@ -124,13 +83,14 @@ def render_comparison(
         in_region = region[order]
         if in_region.any():
             ends = np.round(grid.layer_end(zc[order][in_region]), 6)
-            colours[in_region] = [colour_of.get(e, (0.5, 0.5, 0.5, 1.0)) for e in ends]
+            keys = list(colour_of)
+            colours[in_region] = [colour_of[keys[k]] for k in nearest_level(np.array(keys), ends)]
         xy = mesh.verts[mesh.faces[order]][:, :, :2]
         ax.add_collection(PolyCollection(xy, facecolors=colours, edgecolors="none", linewidths=0))
         a, b, _ = contour_segments(mesh, grid, facing)
         if len(a):
             segs = np.stack([a[:, :2], b[:, :2]], axis=1)
-            ax.add_collection(LineCollection(segs, colors="#f97316", linewidths=0.35))
+            ax.add_collection(LineCollection(segs, colors=EDGE_COLOUR, linewidths=0.35))
         ax.set_xlim(lo[0] - 0.02 * span[0], hi[0] + 0.02 * span[0])
         ax.set_ylim(lo[1] - 0.02 * span[1], hi[1] + 0.02 * span[1])
         ax.set_aspect("equal")
@@ -138,11 +98,11 @@ def render_comparison(
             ax.invert_xaxis()
         ax.axis("off")
         text = before_text if title == "Before" else after_text
-        ax.set_title(f"{title}\n{text or _describe(levels, what)}", loc="left", fontsize=11)
+        ax.set_title(f"{title}\n{text or describe_levels(levels, what)}", loc="left", fontsize=11)
     handles = [
         Patch(facecolor=colour_of[lv], label=f"{lv:.2f} mm") for lv in all_levels
     ]
-    handles.append(Line2D([0], [0], color="#f97316", lw=1.2, label="layer edge (a contour line in the slicer)"))
+    handles.append(Line2D([0], [0], color=EDGE_COLOUR, lw=1.2, label="layer edge (a contour line in the slicer)"))
     fig.legend(
         handles=handles,
         loc="lower center",

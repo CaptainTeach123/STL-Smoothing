@@ -10,31 +10,19 @@ from pathlib import Path
 import numpy as np
 
 from . import __version__
-from .flatten import FlattenResult, Plateau, flatten
+from .flatten import FlattenResult, flatten
 from .layers import LayerGrid
-from .mesh import Mesh
+from .mesh import MIN_WELD_TOL, Mesh, auto_weld_tol
 from .params import Params
-from .slicing import contour_length
+from .summary import summarize
 from .stlio import StlError, read_stl, write_stl
 
-MIN_WELD_TOL = 5e-5  # mm
 REPORT_SUFFIXES = {".png", ".jpg", ".jpeg", ".pdf", ".svg"}
 OPTIONAL_PARAMS = {"planar_ramp_deg"}  # parameters where "none" switches the rule off
-MAX_LINES = 12  # plateaus listed per section before the summary collapses the rest
 
 
 class UsageError(Exception):
     """A problem with the command line itself (exit code 2)."""
-
-
-def auto_weld_tol(tris: np.ndarray) -> float:
-    """Weld tolerance that follows the float32 resolution of the coordinates.
-
-    Exporters sometimes leave copies of a shared corner that differ in the last
-    bit or two; at |coordinate| of a few hundred mm that is more than a fixed
-    0.05 micron.
-    """
-    return max(MIN_WELD_TOL, 5e-7 * float(np.abs(tris).max()))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -117,72 +105,6 @@ def params_from_args(a: argparse.Namespace) -> Params:
         k, v = item.split("=", 1)
         kw[k.strip()] = _coerce(k.strip(), v.strip())
     return Params().replace(**kw)
-
-
-# ----------------------------------------------------------------------- output
-def _fmt_plateau(p: Plateau) -> str:
-    where = "top    " if p.facing == "up" else "ceiling"
-    patches = f"{p.regions} patch{'es' if p.regions != 1 else ''}"
-    if p.kind == "snapped":
-        return f"  {where} {patches:<10} {p.area:9,.0f} mm²  flat at {p.level_before:.3f} mm -> {p.level_after:.2f} mm (on a sampling plane)"
-    span = f"{p.z_low:.2f}–{p.z_high:.2f} mm"
-    return (
-        f"  {where} {patches:<10} {p.area:9,.0f} mm²  {span:<17} {p.layers_before} layer{'s' if p.layers_before != 1 else ' '}"
-        f"  ->  {p.level_after:.2f} mm"
-    )
-
-
-def _list(title: str, plateaus: list[Plateau], out, verbose: bool) -> None:
-    """Print a section of plateaus, collapsing a long tail so a model with thousands
-    of patches does not flood the terminal."""
-    out(title)
-    ordered = sorted(plateaus, key=lambda p: -p.area)
-    shown = ordered if verbose else ordered[:MAX_LINES]
-    for p in shown:
-        out(_fmt_plateau(p))
-    rest = ordered[len(shown):]
-    if rest:
-        out(f"  ... and {len(rest):,} more ({sum(p.area for p in rest):,.0f} mm\u00b2 in total; use -v to list all)")
-
-
-def summarize(res: FlattenResult, before: Mesh, after: Mesh, grid: LayerGrid, verbose: bool, out=print) -> None:
-    flattened = [i for i, p in enumerate(res.plateaus) if p.kind == "smoothed" and p.layers_before > 1]
-    levelled = [i for i, p in enumerate(res.plateaus) if p.kind == "smoothed" and p.layers_before <= 1]
-    snapped = [i for i, p in enumerate(res.plateaus) if p.kind == "snapped"]
-    pl = res.plateaus
-    plural = lambda n: "s" if n != 1 else ""  # noqa: E731
-    if flattened:
-        _list(f"Flattened {len(flattened)} surface{plural(len(flattened))} "
-              f"(heights above the bed, {grid.layer_height:g} mm layers):", [pl[i] for i in flattened], out, verbose)
-        region = np.isin(res.face_plateau, flattened)
-        e0 = contour_length(before, grid, region)
-        e1 = contour_length(after, grid, region, after.verts)
-        out(f"Layer edges on those surfaces: {e0:,.0f} mm -> {e1:,.0f} mm")
-        if any(pl[i].z_high - pl[i].z_low > 1.0 for i in flattened):
-            out("Note: a flattened surface varied by more than 1 mm. If it is really meant to be curved or "
-                "sloped, run again with a smaller --max-range (for example --max-range 1).")
-    elif not (levelled or snapped):
-        out("Nothing to flatten: no surface found that is meant to be flat but crosses layer boundaries.")
-    if levelled:
-        _list(f"Levelled {len(levelled)} nearly-flat surface{plural(len(levelled))} that grazed a slicer "
-              f"sampling plane (they already printed on one layer, with a few stray layer edges):",
-              [pl[i] for i in levelled], out, verbose)
-    if snapped:
-        _list(f"Moved {len(snapped)} already-flat surface{plural(len(snapped))} off a slicer sampling plane "
-              f"(by at most half a layer):", [pl[i] for i in snapped], out, verbose)
-    if res.already_flat and verbose:
-        out("Already printing on a single layer (left unchanged):")
-        for facing, lvl, area in res.already_flat:
-            out(f"  {facing:<7} {area:9,.0f} mm\u00b2  at {lvl:.2f} mm")
-    if res.n_moved:
-        out(f"Moved {res.n_moved:,} vertices, largest move {res.max_dz:.2f} mm, in z only; "
-            f"{res.flipped_faces} flipped faces, {res.degenerate_faces_added} new degenerate faces.")
-    if res.skipped:
-        out(f"Left alone: {len(res.skipped)} candidate{plural(len(res.skipped))}"
-            + ("" if verbose else " (use -v for details)"))
-        if verbose:
-            for line in res.skipped:
-                out(f"  {line}")
 
 
 def _preflight(a: argparse.Namespace, src: Path, dst: Path) -> tuple[str, Path | None]:

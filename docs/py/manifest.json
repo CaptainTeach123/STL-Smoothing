@@ -1,0 +1,17 @@
+{
+  "files": [
+    "__init__.py",
+    "stlio.py",
+    "mesh.py",
+    "layers.py",
+    "slicing.py",
+    "params.py",
+    "_detect.py",
+    "_deform.py",
+    "flatten.py",
+    "summary.py",
+    "preview.py",
+    "web.py"
+  ],
+  "hash": "558cea8a4f14"
+}

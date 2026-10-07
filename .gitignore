@@ -6,3 +6,5 @@ build/
 dist/
 .venv/
 venv/
+tests/web/last_ui.png
+e2e-out/
