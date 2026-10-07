@@ -39,9 +39,13 @@ With "Deploy from a branch" every push to that branch goes live, so publish a br
 (see below) is green.
 
 Limits of the web version: a browser tab has less memory than a terminal, so use the command
-line for very large models (the page warns above 1 million triangles and refuses files over
-200 MB). It writes binary STL. A model of 111,000 triangles took about 2 seconds in the browser
-on a GitHub Actions runner.
+line for very large models. It writes binary STL, and it draws the before/after picture only
+for models up to 1.5 million triangles. The page warns above 1 million triangles and refuses
+files over 200 MB. What was measured (desktop Chromium on a GitHub Actions runner; your device's
+memory decides what you get): 111,000 triangles took 2-3 s, 1.0 million 17 s, 1.46 million 25 s
+and 2.76 million (138 MB) 35 s, each with the same result as the command line. A 3.97 million
+triangle file (198 MB) ran out of memory, and the page said so and pointed to the command-line
+version. Phones will manage less.
 
 ## Install
 
