@@ -47,12 +47,24 @@ def _looks_binary(raw: bytes) -> bool:
     return len(raw) == 84 + 50 * count
 
 
+def _looks_ascii(raw: bytes) -> bool:
+    """A file that starts with ``solid`` is ASCII only if it also reads like ASCII STL.
+
+    Many binary exporters put ``solid`` at the start of the 80-byte header, so the
+    keyword alone proves nothing (a binary file with trailing bytes or a wrong
+    triangle count must not be mistaken for an empty ASCII file).
+    """
+    return b"vertex" in raw[:4096].lower() or b"endsolid" in raw[-256:].lower()
+
+
 def read_stl(path: str | Path) -> StlData:
     raw = Path(path).read_bytes()
+    if raw[:3] == b"\xef\xbb\xbf":  # UTF-8 byte order mark
+        raw = raw[3:]
     if _looks_binary(raw):
         return _read_binary(raw)
     head = raw[:512].lstrip()
-    if head[:5].lower() == b"solid":
+    if head[:5].lower() == b"solid" and _looks_ascii(raw):
         return _read_ascii(raw)
     if len(raw) >= 84:
         # Some exporters write a wrong triangle count.  Trust the data if the
@@ -79,12 +91,18 @@ def _read_binary(raw: bytes, count: int | None = None) -> StlData:
     )
 
 
-_VERTEX_RE = re.compile(rb"vertex\s+(\S+)\s+(\S+)\s+(\S+)", re.IGNORECASE)
+# Vertex lines start a line (so a solid *named* "vertex 1 2 3" cannot be mistaken for one);
+# the unanchored pattern is only a fallback for exporters that write the whole file on one line.
+_VERTEX_LINE_RE = re.compile(rb"^[ \t]*vertex[ \t]+(\S+)[ \t]+(\S+)[ \t]+(\S+)", re.IGNORECASE | re.MULTILINE)
+_VERTEX_RE = re.compile(rb"\bvertex\s+(\S+)\s+(\S+)\s+(\S+)", re.IGNORECASE)
 _SOLID_RE = re.compile(rb"^\s*solid[ \t]*([^\r\n]*)", re.IGNORECASE)
 
 
 def _read_ascii(raw: bytes) -> StlData:
-    found = _VERTEX_RE.findall(raw)
+    # the solid's name (first line) may contain any words: parse the vertices after it
+    nl = min([i for i in (raw.find(b"\n", 0, 512), raw.find(b"\r", 0, 512)) if i >= 0], default=-1)
+    start = nl + 1 if nl >= 0 else 0
+    found = _VERTEX_LINE_RE.findall(raw, start) or _VERTEX_RE.findall(raw, start)
     if not found:
         return StlData(tris=np.zeros((0, 3, 3)), source_format="ascii")
     if len(found) % 3:
@@ -151,4 +169,5 @@ def _facet_normals(tris: np.ndarray) -> np.ndarray:
         return np.zeros((0, 3))
     c = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
     ln = np.linalg.norm(c, axis=1, keepdims=True)
-    return np.divide(c, ln, out=np.zeros_like(c), where=ln > 0)
+    with np.errstate(invalid="ignore"):  # NaN coordinates give NaN normals, never an exception
+        return np.divide(c, ln, out=np.zeros_like(c), where=ln > 0)

@@ -220,24 +220,42 @@ def unfold(mesh: Mesh, A: Analysis, z0: np.ndarray, z: np.ndarray, fixed: np.nda
 
 
 def repair_flips(mesh: Mesh, new_z: np.ndarray, z0: np.ndarray, delta: np.ndarray, P: Params) -> np.ndarray:
-    """Damp the move at the corners of any face that would still flip."""
+    """Damp the move at the corners of any face that would still flip.
+
+    Incremental version: the reference normals are computed once, and after the
+    first full pass only faces that touch a vertex whose damping changed are re-tested.
+    """
     verts = mesh.verts
-    lam = np.ones(mesh.n_verts)
-    cur = new_z
-    for _ in range(P.damp_iters):
+    faces = mesh.faces
+    V = mesh.n_verts
+    lam = np.ones(V)
+    c0 = mesh.face_cross(verts)
+    big = 0.5 * np.linalg.norm(c0, axis=1) > 1e-9
+
+    def test(cur, fidx=None):
         nv = verts.copy()
         nv[:, 2] = cur
-        fl = mesh.flipped_faces(nv)
+        if fidx is None:
+            c1 = mesh.face_cross(nv)
+            return big & ((c0 * c1).sum(axis=1) < 0)
+        t = nv[faces[fidx]]
+        c1 = np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0])
+        return big[fidx] & ((c0[fidx] * c1).sum(axis=1) < 0)
+
+    cur = new_z
+    fl = test(cur)
+    for _ in range(P.damp_iters):
         if not fl.any():
             return cur
-        vs = np.unique(mesh.faces[fl])
+        vs = np.unique(faces[fl])
         lam[vs] *= 0.5
         cur = z0 + lam * delta
-    nv = verts.copy()
-    nv[:, 2] = cur
-    fl = mesh.flipped_faces(nv)
+        touched = np.zeros(V, bool)
+        touched[vs] = True
+        fidx = np.flatnonzero(touched[faces].any(axis=1))
+        fl[fidx] = test(cur, fidx)
     if fl.any():
-        vs = np.unique(mesh.faces[fl])
+        vs = np.unique(faces[fl])
         lam[vs] = 0.0
         cur = z0 + lam * delta
     return cur

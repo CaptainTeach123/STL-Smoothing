@@ -97,19 +97,18 @@ def test_layer_height_option(wavy_stl):
 def test_max_range_option_protects_the_surface(wavy_stl):
     p, _ = wavy_stl
     code, text = cli(p, "--analyze", "--max-range", "0.5")
-    assert "nothing to flatten" in text
+    assert "Nothing to flatten" in text
 
 
 def test_set_option(wavy_stl):
     p, _ = wavy_stl
     code, text = cli(p, "--analyze", "--set", "max_range=0.5")
-    assert "nothing to flatten" in text
-    with pytest.raises(SystemExit):
-        cli(p, "--set", "no_such_param=1")
-    with pytest.raises(SystemExit):
-        cli(p, "--set", "max_range")
-    with pytest.raises(SystemExit):
-        cli(p, "--set", "max_range=abc")
+    assert "Nothing to flatten" in text
+    for bad in ("no_such_param=1", "max_range", "max_range=abc", "snap_exact_flat=maybe"):
+        code, text = cli(p, "--set", bad)
+        assert code == 2 and text.startswith("error:"), bad
+    # "none" switches an optional rule off
+    assert cli(p, "--analyze", "--set", "planar_ramp_deg=none")[0] == 0
 
 
 def test_open_mesh_warning(tmp_path):

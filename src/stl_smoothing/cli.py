@@ -17,7 +17,24 @@ from .params import Params
 from .slicing import contour_length
 from .stlio import StlError, read_stl, write_stl
 
-DEFAULT_WELD_TOL = 5e-5  # mm; below float32 resolution of typical coordinates
+MIN_WELD_TOL = 5e-5  # mm
+REPORT_SUFFIXES = {".png", ".jpg", ".jpeg", ".pdf", ".svg"}
+OPTIONAL_PARAMS = {"planar_ramp_deg"}  # parameters where "none" switches the rule off
+MAX_LINES = 12  # plateaus listed per section before the summary collapses the rest
+
+
+class UsageError(Exception):
+    """A problem with the command line itself (exit code 2)."""
+
+
+def auto_weld_tol(tris: np.ndarray) -> float:
+    """Weld tolerance that follows the float32 resolution of the coordinates.
+
+    Exporters sometimes leave copies of a shared corner that differ in the last
+    bit or two; at |coordinate| of a few hundred mm that is more than a fixed
+    0.05 micron.
+    """
+    return max(MIN_WELD_TOL, 5e-7 * float(np.abs(tris).max()))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -51,12 +68,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
                    help="override any advanced parameter (see Params in the source); can be repeated")
     g = p.add_argument_group("output")
-    g.add_argument("--analyze", action="store_true", help="only report what would change; write no STL")
+    g.add_argument("--analyze", action="store_true",
+                   help="only report what would change; write no STL (a --report picture is still written)")
     g.add_argument("--report", metavar="PNG", help="write a before/after picture of the changed surfaces "
-                                                 "(needs matplotlib)")
+                                                 "(.png, .jpg, .pdf or .svg; needs matplotlib)")
     g.add_argument("--ascii", action="store_true", help="write an ASCII STL instead of binary")
-    g.add_argument("--weld-tol", type=float, default=DEFAULT_WELD_TOL, metavar="MM",
-                   help="merge corners closer than this (default %g; 0 = exact matches only)" % DEFAULT_WELD_TOL)
+    g.add_argument("--weld-tol", type=float, default=None, metavar="MM",
+                   help="merge corners closer than this (default: about 5e-7 x the largest coordinate, at least "
+                        "%g; 0 = exact matches only)" % MIN_WELD_TOL)
     g.add_argument("-v", "--verbose", action="store_true", help="also list what was found but left alone, and why")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return p
@@ -65,7 +84,9 @@ def build_parser() -> argparse.ArgumentParser:
 def _coerce(name: str, raw: str):
     kinds = {f.name: f.type for f in fields(Params)}
     if name not in kinds:
-        raise SystemExit(f"error: --set: unknown parameter {name!r}; known: {', '.join(sorted(kinds))}")
+        raise UsageError(f"--set: unknown parameter {name!r}; known: {', '.join(sorted(kinds))}")
+    if raw.lower() in ("none", "null") and name in OPTIONAL_PARAMS:
+        return None
     default = getattr(Params, name)
     if isinstance(default, bool):
         low = raw.lower()
@@ -73,13 +94,11 @@ def _coerce(name: str, raw: str):
             return True
         if low in ("0", "false", "no", "off"):
             return False
-        raise SystemExit(f"error: --set {name}: expected true/false, got {raw!r}")
-    if raw.lower() in ("none", "null") and default is None:
-        return None
+        raise UsageError(f"--set {name}: expected true/false, got {raw!r}")
     try:
-        return type(default)(raw) if default is not None else float(raw)
-    except ValueError:
-        raise SystemExit(f"error: --set {name}: cannot read {raw!r}") from None
+        return type(default)(raw)
+    except (TypeError, ValueError):
+        raise UsageError(f"--set {name}: cannot read {raw!r}") from None
 
 
 def params_from_args(a: argparse.Namespace) -> Params:
@@ -94,7 +113,7 @@ def params_from_args(a: argparse.Namespace) -> Params:
         kw["snap_exact_flat"] = False
     for item in a.set:
         if "=" not in item:
-            raise SystemExit(f"error: --set expects NAME=VALUE, got {item!r}")
+            raise UsageError(f"--set expects NAME=VALUE, got {item!r}")
         k, v = item.split("=", 1)
         kw[k.strip()] = _coerce(k.strip(), v.strip())
     return Params().replace(**kw)
@@ -113,34 +132,44 @@ def _fmt_plateau(p: Plateau) -> str:
     )
 
 
+def _list(title: str, plateaus: list[Plateau], out, verbose: bool) -> None:
+    """Print a section of plateaus, collapsing a long tail so a model with thousands
+    of patches does not flood the terminal."""
+    out(title)
+    ordered = sorted(plateaus, key=lambda p: -p.area)
+    shown = ordered if verbose else ordered[:MAX_LINES]
+    for p in shown:
+        out(_fmt_plateau(p))
+    rest = ordered[len(shown):]
+    if rest:
+        out(f"  ... and {len(rest):,} more ({sum(p.area for p in rest):,.0f} mm\u00b2 in total; use -v to list all)")
+
+
 def summarize(res: FlattenResult, before: Mesh, after: Mesh, grid: LayerGrid, verbose: bool, out=print) -> None:
-    flattened = [p for p in res.plateaus if p.kind == "smoothed" and p.layers_before > 1]
-    levelled = [p for p in res.plateaus if p.kind == "smoothed" and p.layers_before <= 1]
-    snapped = [p for p in res.plateaus if p.kind == "snapped"]
+    flattened = [i for i, p in enumerate(res.plateaus) if p.kind == "smoothed" and p.layers_before > 1]
+    levelled = [i for i, p in enumerate(res.plateaus) if p.kind == "smoothed" and p.layers_before <= 1]
+    snapped = [i for i, p in enumerate(res.plateaus) if p.kind == "snapped"]
+    pl = res.plateaus
+    plural = lambda n: "s" if n != 1 else ""  # noqa: E731
     if flattened:
-        out(f"Flattened {len(flattened)} surface{'s' if len(flattened) != 1 else ''} "
-            f"(heights above the bed, {grid.layer_height:g} mm layers):")
-        for p in flattened:
-            out(_fmt_plateau(p))
-        region = np.isin(res.face_plateau, [i for i, p in enumerate(res.plateaus) if p in flattened])
+        _list(f"Flattened {len(flattened)} surface{plural(len(flattened))} "
+              f"(heights above the bed, {grid.layer_height:g} mm layers):", [pl[i] for i in flattened], out, verbose)
+        region = np.isin(res.face_plateau, flattened)
         e0 = contour_length(before, grid, region)
         e1 = contour_length(after, grid, region, after.verts)
         out(f"Layer edges on those surfaces: {e0:,.0f} mm -> {e1:,.0f} mm")
-        wide = [p for p in flattened if p.z_high - p.z_low > 1.0]
-        if wide:
+        if any(pl[i].z_high - pl[i].z_low > 1.0 for i in flattened):
             out("Note: a flattened surface varied by more than 1 mm. If it is really meant to be curved or "
                 "sloped, run again with a smaller --max-range (for example --max-range 1).")
     elif not (levelled or snapped):
-        out("No wobbly flat surfaces found; nothing to flatten.")
+        out("Nothing to flatten: no surface found that is meant to be flat but crosses layer boundaries.")
     if levelled:
-        out(f"Levelled {len(levelled)} nearly-flat surface{'s' if len(levelled) != 1 else ''} that grazed a slicer "
-            f"sampling plane (they already printed on one layer, with a few stray layer edges):")
-        for p in levelled:
-            out(_fmt_plateau(p))
+        _list(f"Levelled {len(levelled)} nearly-flat surface{plural(len(levelled))} that grazed a slicer "
+              f"sampling plane (they already printed on one layer, with a few stray layer edges):",
+              [pl[i] for i in levelled], out, verbose)
     if snapped:
-        out(f"Moved {len(snapped)} already-flat surface{'s' if len(snapped) != 1 else ''} off a slicer sampling plane:")
-        for p in snapped:
-            out(_fmt_plateau(p))
+        _list(f"Moved {len(snapped)} already-flat surface{plural(len(snapped))} off a slicer sampling plane "
+              f"(by at most half a layer):", [pl[i] for i in snapped], out, verbose)
     if res.already_flat and verbose:
         out("Already printing on a single layer (left unchanged):")
         for facing, lvl, area in res.already_flat:
@@ -149,39 +178,67 @@ def summarize(res: FlattenResult, before: Mesh, after: Mesh, grid: LayerGrid, ve
         out(f"Moved {res.n_moved:,} vertices, largest move {res.max_dz:.2f} mm, in z only; "
             f"{res.flipped_faces} flipped faces, {res.degenerate_faces_added} new degenerate faces.")
     if res.skipped:
-        shown = res.skipped if verbose else []
-        out(f"Left alone: {len(res.skipped)} candidate{'s' if len(res.skipped) != 1 else ''}"
+        out(f"Left alone: {len(res.skipped)} candidate{plural(len(res.skipped))}"
             + ("" if verbose else " (use -v for details)"))
-        for line in shown:
-            out(f"  {line}")
+        if verbose:
+            for line in res.skipped:
+                out(f"  {line}")
 
 
-def run(argv: list[str] | None = None, out=print) -> int:
+def _preflight(a: argparse.Namespace, src: Path, dst: Path) -> tuple[str, Path | None]:
+    """Check the paths before any heavy work; returns (error message or "", report path)."""
+    if not src.is_file():
+        return f"{src}: no such file", None
+    report = None
+    if a.report:
+        report = Path(a.report)
+        if report.suffix == "":
+            report = report.with_suffix(".png")
+        elif report.suffix.lower() not in REPORT_SUFFIXES:
+            return f"--report: unsupported file type {report.suffix!r} (use .png, .jpg, .pdf or .svg)", None
+        if not (report.parent.is_dir()):
+            return f"--report: the directory {report.parent} does not exist", None
+    if not a.analyze:
+        if dst.resolve() == src.resolve():
+            return "the output would overwrite the input; choose a different -o", None
+        if dst.is_dir():
+            return f"-o: {dst} is a directory", None
+        if not dst.parent.is_dir():
+            return f"-o: the directory {dst.parent} does not exist", None
+    return "", report
+
+
+def run(argv: list[str] | None = None, out=print, err=None) -> int:
+    """Run the tool; returns the exit code (0 ok, 1 the data could not be processed, 2 bad usage)."""
+    err = err or out
     a = build_parser().parse_args(argv)
-    P = params_from_args(a)
     try:
+        P = params_from_args(a)
         grid = LayerGrid(a.layer_height, a.first_layer)
-    except ValueError as exc:
-        out(f"error: {exc}")
+    except (UsageError, ValueError) as exc:
+        err(f"error: {exc}")
         return 2
     src = Path(a.input)
-    if not src.is_file():
-        out(f"error: {src}: no such file")
-        return 2
     dst = Path(a.output) if a.output else src.with_name(src.stem + "_smoothed.stl")
-    if not a.analyze and dst.resolve() == src.resolve():
-        out("error: the output would overwrite the input; choose a different -o")
+    problem, report_path = _preflight(a, src, dst)
+    if problem:
+        err(f"error: {problem}")
         return 2
 
     try:
         data = read_stl(src)
-    except StlError as exc:
-        out(f"error: {exc}")
+    except (StlError, OSError) as exc:
+        err(f"error: {exc}")
         return 1
     if len(data.tris) == 0:
-        out(f"error: {src}: the file contains no triangles")
+        err(f"error: {src}: the file contains no triangles")
         return 1
-    mesh = Mesh.from_triangles(data.tris, tol=a.weld_tol if a.weld_tol > 0 else None)
+    if not np.isfinite(data.tris).all():
+        err(f"error: {src}: the file contains NaN or infinite coordinates")
+        return 1
+    tol = auto_weld_tol(data.tris) if a.weld_tol is None else a.weld_tol
+    mesh = Mesh.from_triangles(data.tris, tol=tol if tol > 0 else None)
+    del data.tris  # the float64 triangle soup is large and no longer needed
     stats = mesh.edge_manifold_stats()
     lo, hi = mesh.bbox()
     ext = hi - lo
@@ -195,11 +252,15 @@ def run(argv: list[str] | None = None, out=print) -> int:
     after = Mesh(res.verts, mesh.faces)
     summarize(res, mesh, after, grid, a.verbose, out)
 
-    if a.report:
+    # The picture is a convenience: whatever goes wrong with it must not stop the STL being written.
+    if report_path is not None:
         if not (res.smoothed_faces.any() or res.snapped_faces.any()):
             out("No changed surfaces: no report written.")
         else:
-            _write_reports(a.report, mesh, after, grid, res, out)
+            try:
+                _write_reports(report_path, mesh, after, grid, res, out)
+            except Exception as exc:  # noqa: BLE001
+                out(f"warning: could not write the report: {exc}")
 
     if a.analyze:
         out("Analyze only: no STL written.")
@@ -207,19 +268,23 @@ def run(argv: list[str] | None = None, out=print) -> int:
     if not res.n_moved:
         out("Nothing was changed; no STL written.")
         return 0
-    write_stl(
-        dst,
-        after.to_triangles(),
-        binary=not a.ascii,
-        header=data.header if (data.source_format == "binary" and data.header.strip(b"\x00")) else b"stl-smoothing",
-        attrs=data.attrs,
-        name=data.name or src.stem,
-    )
+    try:
+        write_stl(
+            dst,
+            after.to_triangles(),
+            binary=not a.ascii,
+            header=data.header if (data.source_format == "binary" and data.header.strip(b"\x00")) else b"stl-smoothing",
+            attrs=data.attrs,
+            name=data.name or src.stem,
+        )
+    except OSError as exc:
+        err(f"error: cannot write {dst}: {exc}")
+        return 1
     out(f"Wrote {dst}")
     return 0
 
 
-def _write_reports(path: str, before: Mesh, after: Mesh, grid: LayerGrid, res: FlattenResult, out) -> None:
+def _write_reports(base: Path, before: Mesh, after: Mesh, grid: LayerGrid, res: FlattenResult, out) -> None:
     try:
         from .report import render_comparison
     except Exception as exc:  # pragma: no cover
@@ -231,16 +296,16 @@ def _write_reports(path: str, before: Mesh, after: Mesh, grid: LayerGrid, res: F
         out("No surface changed layers: no report written.")
         return
     region = np.isin(res.face_plateau, changed)
-    base = Path(path)
+    has_tops = bool((region & (res.facing == 1)).any())
     for facing, view, what in ((1, "top", "Flattened top surfaces"), (-1, "bottom", "Flattened ceilings (seen from below)")):
         mask = region & (res.facing == facing)
         if not mask.any():
             continue
         n_here = len({int(i) for i in res.face_plateau[mask]})
-        target = base if facing == 1 or not (region & (res.facing == 1)).any() else base.with_name(base.stem + "_ceilings" + base.suffix)
+        target = base if facing == 1 or not has_tops else base.with_name(base.stem + "_ceilings" + base.suffix)
         try:
             info = render_comparison(before, after, grid, mask, str(target), view=view, what=what)
-        except RuntimeError as exc:
+        except RuntimeError as exc:  # matplotlib missing
             out(f"warning: {exc}")
             return
         out(f"Wrote report {target} ({n_here} surface{'s' if n_here != 1 else ''}: "
@@ -248,4 +313,10 @@ def _write_reports(path: str, before: Mesh, after: Mesh, grid: LayerGrid, res: F
 
 
 def main() -> None:  # pragma: no cover - console entry point
-    sys.exit(run())
+    # Never die on a terminal that cannot show the characters in our messages (mm², –).
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+    sys.exit(run(err=lambda line: print(line, file=sys.stderr)))

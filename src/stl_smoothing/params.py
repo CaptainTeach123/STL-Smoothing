@@ -35,13 +35,13 @@ class Params:
     smooth_radius: float = 1.2  # mm; reach of the normal smoothing used to classify faces
     smooth_max_rounds: int = 6
     family_slope_deg: float = 30.0  # faces steeper than this never take part in smoothing
-    flat_tol: float = 1e-6  # mm; z-span of a face below which it is "exactly flat"
+    flat_tol: float = 1e-6  # mm; z-span of a face below which it is "exactly flat" (never less than 4 float32 ulps)
     exact_max_cut: float = 0.5  # exact patches continued smoothly by noisy faces are not intentional ...
     exact_demote_width: float = 4.0  # ... when they are thinner than this (mm, 2 x area / perimeter)
     planar_ramp_deg: float | None = 0.5  # exactly planar patch tilted at least this much = intentional ramp
     planar_tol_deg: float = 0.02
     planar_min_area: float = 20.0
-    planar_min_faces: int = 12
+    planar_min_faces: int = 2
 
     # ---------------------------------------------------- histogram / modes
     bin_frac: float = 0.25  # histogram bin = bin_frac * layer_height

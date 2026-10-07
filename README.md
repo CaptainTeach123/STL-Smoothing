@@ -49,6 +49,9 @@ Moved 17,428 vertices, largest move 0.64 mm, in z only; 0 flipped faces, 1 new d
 Left alone: 9 candidates (use -v for details)
 ```
 
+Exit codes: `0` success (including "nothing to do"), `1` the file could not be processed,
+`2` bad command line. Errors are printed to stderr.
+
 Always check the result in your slicer's layer preview (and `--report`) before you print.
 
 ### Options
@@ -60,9 +63,11 @@ Always check the result in your slicer's layer preview (and `--report`) before y
 | `--max-range MM` | widest height variation of ONE flat surface (default 2.0). More than that is an intentional shape. **Lower it (e.g. `1.0`) to protect gently curved plates and shallow ramps; raise it if a very wobbly surface is left alone.** |
 | `--max-slope DEG` | a surface is "flat" while within this many degrees of horizontal (default 5), measured on smoothed normals |
 | `--min-area MM2` | ignore flat surfaces smaller than this (default 40) |
-| `--analyze` | report only, write no STL |
-| `--report PNG` | before/after picture of the surfaces that changed (needs matplotlib) |
+| `--no-snap-exact` | do not move already-flat surfaces that sit exactly on a slicer sampling plane (see step 3) |
+| `--analyze` | report only, write no STL (a `--report` picture is still written) |
+| `--report PNG` | before/after picture of the surfaces that changed (`.png`, `.jpg`, `.pdf`, `.svg`; needs matplotlib). A failure to write it never stops the STL being written |
 | `--ascii` | write an ASCII STL (default: binary) |
+| `--weld-tol MM` | merge corners closer than this (default: automatic, about 5e-7 x the largest coordinate; `0` = exact matches only) |
 | `--set NAME=VALUE` | override any advanced parameter, see `src/stl_smoothing/params.py` |
 | `-v` | also list what was found but left alone, and why |
 
@@ -83,9 +88,13 @@ point of the model (where a slicer puts the bed).
 3. **Keeps what is intentional.** Surfaces whose heights are spread evenly (ramps, crowns),
    whose edge continues smoothly into a slope, that vary by more than `--max-range`, or
    that already print on a single layer clear of the slicer's sampling planes are left
-   alone. Faces that are already exactly flat are anchors and never move. Where two
-   patches of a plateau meet at a wall at least 1.5 layers high, that step is kept
-   (an embossed pad stays embossed).
+   alone. Faces that are already exactly flat are anchors: a noisy neighbour being
+   flattened does not drag them. (The one exception: an exactly flat top or ceiling of at
+   least 5 mm² that sits *on* a sampling plane, e.g. a 12.5 mm tall block at 0.2 mm layers,
+   could print on either layer, so it is moved by half a layer to the nearest layer
+   boundary and reported as "on a sampling plane". `--no-snap-exact` turns that off.)
+   Where two patches of a plateau meet at a wall at least 1.5 layers high, that step is
+   kept (an embossed pad stays embossed).
 4. **Snaps to a layer boundary.** Slicers sample each layer at its mid-height, so a
    surface exactly *on* a boundary is half a layer from both neighbouring sample planes
    — the most robust place for a flat top. The plateau goes to the boundary nearest its
@@ -106,10 +115,15 @@ Running it again on its own output normally changes nothing.
   lower `--max-range` and look at the `--report` picture.
 * A deliberate step smaller than about 1.5 layers is ambiguous when the surfaces on both
   sides wobble by as much; the two levels are merged.
-* Surfaces that vary by more than `--max-range` are left alone. Close to the limit a wobbly surface
-  may be only partly flattened; raise `--max-range` a little if you see stray layer edges.
+* Surfaces that vary by more than `--max-range` are left alone, and reliability falls off well
+  before that limit. In about 1,000 random wobbly panels, a panel with less than 1.25 mm of
+  variation was flattened completely in all but 1 of 642 cases; between 1.25 and 1.75 mm about
+  1 in 14 ended up only partly flattened, and between 1.75 and 1.9 mm about 2 in 5 did (stray
+  layer edges are left). Surfaces that wobble by about 1.2 mm or less, like the one in the picture above, are in the safe range.
 * Only horizontal surfaces (tops and ceilings) are handled. Wobbly *vertical* walls and
   generally curved surfaces are not touched. Mesh noise on slanted surfaces is out of scope.
+* NaN or infinite coordinates are rejected (exit code 1). Meshes with open edges are processed
+  (with a warning) but may be flattened incompletely.
 * Plates thinner than about two layers are quantised to the layer grid, so they can come out up
   to a layer thicker or thinner (a slicer rounds them the same way).
 * Models whose flat surfaces are tilted by a few degrees on purpose need `--max-slope`
@@ -135,11 +149,13 @@ stlio.write_stl("fixed.stl", Mesh(result.verts, mesh.faces).to_triangles())
 
 ```bash
 pip install -e ".[dev]"
-pytest                                       # unit + behaviour tests (about a minute)
+pytest                                       # ~190 unit + behaviour tests (about 40 s)
 STL_SMOOTHING_SAMPLE=path/to/model.stl pytest tests/test_flatten.py   # + real-model test
-python tests/bench.py algo.py --sample path/to/model.stl              # score an algorithm
+python tests/bench.py algo.py [--holdout] --sample path/to/model.stl  # score an algorithm
 ```
 
 `tests/scenes.py` builds closed test models with known ground truth (wobbly slabs,
 panels around domes, ceilings, ramps between plateaus, intentional blocks, ...);
 `tests/metrics.py` emulates the slicer to measure the layer edges left on a surface.
+`tests/bench.py` takes any file defining `smooth(mesh, grid) -> (V, 3) array` and scores it
+on those scenes (and on a re-noised copy of a real model, if given with `--sample`).

@@ -33,7 +33,7 @@ def _import_mpl():
     return plt, LineCollection, PolyCollection, Patch, Line2D
 
 
-def region_layers(mesh: Mesh, grid: LayerGrid, faces: np.ndarray, min_frac: float = 0.002):
+def region_layers(mesh: Mesh, grid: LayerGrid, faces: np.ndarray, min_frac: float = 0.005):
     """Layer ends (sorted) that the selected faces occupy, ignoring slivers."""
     if not faces.any():
         return np.zeros(0)
@@ -107,7 +107,9 @@ def render_comparison(
     span = np.maximum(hi - lo, 1e-9)
     fig_h = 7.0
     fig_w = 2 * fig_h * span[0] / span[1]
-    fig, axes = plt.subplots(1, 2, figsize=(max(fig_w, 8) + 0.5, fig_h + 1.2), dpi=dpi)
+    # very long thin parts would give an absurdly wide picture: cap the aspect ratio
+    fig_w = float(np.clip(fig_w, 8.0, 3.0 * fig_h * 2))
+    fig, axes = plt.subplots(1, 2, figsize=(fig_w + 0.5, fig_h + 1.2), dpi=dpi)
     for ax, mesh, title, levels in (
         (axes[0], before, "Before", lv_before),
         (axes[1], after, "After", lv_after),

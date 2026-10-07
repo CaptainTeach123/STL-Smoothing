@@ -69,7 +69,9 @@ class Topo:
         d = mesh.verts[lo[i0], :2] - mesh.verts[hi[i0], :2]
         self.elen = np.hypot(d[:, 0], d[:, 1])
         # open (boundary) edges: appear exactly once
-        _, first, counts = np.unique(sk, return_index=True, return_counts=True)
+        # sk is already sorted: run starts / lengths by differencing (np.unique would sort the 3F keys again)
+        first = np.flatnonzero(np.r_[True, sk[1:] != sk[:-1]])
+        counts = np.diff(np.r_[first, len(sk)])
         op = order[first[counts == 1]]
         d = mesh.verts[lo[op], :2] - mesh.verts[hi[op], :2]
         self.open_face = op % F
@@ -168,6 +170,10 @@ def plateau_levels(mesh, cl, accepted, comp_group, zc, area, soft, valid, glevel
     for x, y in zip(a.tolist(), b.tolist()):
         nbrs.setdefault(x, []).append(y)
         nbrs.setdefault(y, []).append(x)
+    # pass 1: height of every component relative to the root of its cluster (0 for roots / lone comps)
+    rel = np.zeros(ncomp)
+    parent: dict = {}
+    order: list = []
     seen = set()
     for start in sorted(nbrs, key=lambda c: -carea[c]):  # biggest component of a cluster is its root
         if start in seen:
@@ -181,8 +187,26 @@ def plateau_levels(mesh, cl, accepted, comp_group, zc, area, soft, valid, glevel
                     continue
                 seen.add(c)
                 d = cmed[c] - cmed[p]
-                clevel[c] = clevel[p] if abs(d) < s_min else float(grid.snap(clevel[p] + d))
+                rel[c] = rel[p] if abs(d) < s_min else rel[p] + d
+                parent[c] = p
+                order.append(c)
                 stack.append(c)
+    # pass 2: the level of a group that has steps is the median of its faces with the steps taken out
+    # (otherwise the root of a stepped cluster is put on the median of the union of all its levels)
+    fsel = np.flatnonzero(sel)
+    gf = comp_group[cl[fsel]]
+    relf = rel[cl[fsel]]
+    zf = zc[fsel] - relf
+    af = area[fsel]
+    base = np.array(glevel_snap, dtype=float)
+    for g in np.unique(gf[relf != 0]):
+        mg = gf == g
+        base[g] = float(grid.snap(wmedian(zf[mg], af[mg])))
+    clevel[accepted] = base[comp_group[accepted]]
+    for c in order:
+        p = parent[c]
+        d = cmed[c] - cmed[p]
+        clevel[c] = clevel[p] if abs(d) < s_min else float(grid.snap(clevel[p] + d))
     return clevel
 
 
@@ -214,9 +238,17 @@ def smoothed_normals(mesh: Mesh, n: np.ndarray, area: np.ndarray, valid: np.ndar
         rows = mesh.faces[idx].ravel()
         cols = np.repeat(np.arange(len(idx)), 3)
         inc = sparse.csr_matrix((np.ones(len(rows)), (rows, cols)), shape=(V, len(idx)))
+        # face-face adjacency (weight = shared corners), cut at the smoothing reach: a ring
+        # average must not pool faces that are further apart than smooth_radius (an apex fan,
+        # a ridge between coarse triangles), otherwise a cone or a gable looks flat
+        adj = (inc.T @ inc).tocoo()
+        cen = mesh.verts[mesh.faces[idx]].mean(axis=1)
+        dist = np.linalg.norm(cen[adj.row] - cen[adj.col], axis=1)
+        keep = (adj.row == adj.col) | (dist <= 2.0 * P.smooth_radius)
+        adj = sparse.csr_matrix((adj.data[keep], (adj.row[keep], adj.col[keep])), shape=adj.shape)
         c = cross[idx]
         for _ in range(rounds):
-            c = inc.T @ (inc @ c)
+            c = adj @ c
         ln = np.linalg.norm(c, axis=1, keepdims=True)
         out[idx] = np.divide(c, ln, out=n[idx].copy(), where=ln > 0)
     return out
@@ -396,7 +428,9 @@ def boundary_stats(topo, area, valid, soft, grp, cl, ncomp, gsign, ignore=None, 
     cut = cut + np.where(broad, 0.0, same)
     hard = hard + np.where(broad, same, 0.0)
     tot = cut + hard
-    cut_frac = np.divide(cut, tot, out=np.ones(ncomp), where=tot > 0)
+    # nothing left to judge (every boundary edge faces an ignored, fillable hole bounded by walls)
+    # means the plateau is closed by walls, not that it continues smoothly
+    cut_frac = np.divide(cut, tot, out=(np.zeros(ncomp) if ignore is not None else np.ones(ncomp)), where=tot > 0)
     return dict(area=carea, cut=cut, hard=hard, cut_frac=cut_frac, comp_group=comp_g)
 
 
@@ -531,7 +565,10 @@ def analyse(mesh: Mesh, grid: LayerGrid, P: Params) -> Analysis:
     soft = {s: valid & (s * nz >= cos_wall) & ~bed for s in (+1, -1)}
 
     # -- exactly flat faces: intentional unless noisy faces continue them smoothly
-    exact_raw = valid & (zspan <= P.flat_tol) & (np.abs(n[:, 2]) > cos_wall)
+    # "exactly flat" means equal up to float32 noise: a few ulps at this height, never less than flat_tol
+    ulp = np.spacing(np.abs(tz).max(axis=1).astype(np.float32)).astype(np.float64)
+    flat_tol = np.maximum(P.flat_tol, 4.04 * ulp)
+    exact_raw = valid & (zspan <= flat_tol) & (np.abs(n[:, 2]) > cos_wall)
     exact = exact_raw.copy()
     demoted = np.zeros(F, bool)
     if exact_raw.any():
@@ -582,8 +619,13 @@ def analyse(mesh: Mesh, grid: LayerGrid, P: Params) -> Analysis:
             continue
         wins = find_windows(zc[cand], wts[cand], h, P)
         kept = []
+        ci_all = np.flatnonzero(cand)
         for w in wins:
             w["sign"] = s
+            # centroid heights hide the rise WITHIN a big face: add the faces' own z-extent
+            inw = ci_all[(zc[ci_all] >= w["lo"]) & (zc[ci_all] <= w["hi"])]
+            if len(inw):
+                w["span"] += float(np.percentile(zspan[inw], 99))
             if w["mass"] < P.min_area:
                 rejected.append((s, w, "too small"))
             elif w["span"] > P.max_range:
@@ -672,22 +714,35 @@ def analyse(mesh: Mesh, grid: LayerGrid, P: Params) -> Analysis:
 
     # -- a plateau that already prints on a single layer has no layer lines: leave it alone
     already: list = []
-    for g in range(G):
-        m = plateau_group == g
-        if not m.any():
-            continue
-        vz = z[np.unique(faces[m])]
-        if grid.within_one_layer(float(vz.min()), float(vz.max()), P.plane_margin):
-            plateau_group[m] = -1
-            already.append((int(gsign[g]), float(wmedian(zc[m], area[m])), float(area[m].sum())))
+    live0 = plateau_group >= 0
+    if G and live0.any():
+        gid = plateau_group[live0]
+        fz = tz[live0]
+        o = np.argsort(gid, kind="stable")
+        gs = gid[o]
+        starts = np.flatnonzero(np.r_[True, gs[1:] != gs[:-1]])
+        ug = gs[starts]
+        gmin = np.minimum.reduceat(fz.min(1)[o], starts)
+        gmax = np.maximum.reduceat(fz.max(1)[o], starts)
+        mg = P.plane_margin * grid.layer_height + 1e-6
+        one = grid.layer_number(gmin - mg) == grid.layer_number(gmax + mg)
+        if one.any():
+            garea = np.bincount(gid, weights=area[live0], minlength=G)
+            gmed = grouped_wmedian(gid, zc[live0], area[live0], G)
+            for g in ug[one].tolist():
+                already.append((int(gsign[g]), float(gmed[g]), float(garea[g])))
+            kill = np.zeros(G, bool)
+            kill[ug[one]] = True
+            plateau_group[live0 & kill[np.maximum(plateau_group, 0)]] = -1
 
     # -- level of each group: snapped weighted median of the accepted faces; components
     #    that meet at a deliberate step keep their height relative to their neighbour
     glevel = np.full(G, np.nan)
-    for g in range(G):
-        m = plateau_group == g
-        if m.any():
-            glevel[g] = float(grid.snap(wmedian(zc[m], area[m])))
+    live1 = plateau_group >= 0
+    if G and live1.any():
+        gmed = grouped_wmedian(plateau_group[live1], zc[live1], area[live1], G)
+        has = ~np.isnan(gmed)
+        glevel[has] = grid.snap(gmed[has])
     acc = np.zeros(ncomp, dtype=bool)
     live = plateau_group >= 0
     if ncomp and live.any():

@@ -15,16 +15,21 @@ from dataclasses import dataclass
 import numpy as np
 
 
+MIN_LAYER = 0.005  # mm; far below any real slicer setting, but keeps the histograms sane
+MAX_LAYER = 5.0
+
+
 @dataclass(frozen=True)
 class LayerGrid:
     layer_height: float = 0.2
     first_layer: float | None = None  # None -> same as layer_height
 
     def __post_init__(self):
-        if not self.layer_height > 0:
-            raise ValueError("layer_height must be positive")
-        if self.first_layer is not None and not self.first_layer > 0:
-            raise ValueError("first_layer must be positive")
+        for name, v in (("layer_height", self.layer_height), ("first_layer", self.first_layer)):
+            if v is None:
+                continue
+            if not (MIN_LAYER <= v <= MAX_LAYER):  # also rejects NaN and inf
+                raise ValueError(f"{name} must be between {MIN_LAYER:g} and {MAX_LAYER:g} mm, got {v!r}")
 
     @property
     def first(self) -> float:
