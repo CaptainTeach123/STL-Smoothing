@@ -73,6 +73,14 @@ def main() -> int:
         page.on("console", lambda m: log(f"[console.{m.type}] {m.text}"))
         page.on("pageerror", lambda e: log(f"[pageerror] {e}"))
         page.on("requestfailed", lambda r: log(f"[requestfailed] {r.url} {r.failure}"))
+        downloaded = {}
+
+        def count(resp):
+            host = resp.url.split("/")[2]
+            size = int(resp.headers.get("content-length") or 0)
+            downloaded[host] = downloaded.get(host, 0) + size
+
+        page.on("response", count)
         try:
             t0 = time.time()
             page.goto(url)
@@ -81,6 +89,8 @@ def main() -> int:
             state = page.get_attribute("#engine", "data-state")
             engine_text = page.inner_text("#engine-text")
             log(f"engine state after {time.time() - t0:.0f} s: {state}: {engine_text}")
+            log("engine download (content-length, uncompressed on the wire may differ): "
+                + ", ".join(f"{h}: {b / 1e6:.1f} MB" for h, b in downloaded.items()))
             page.screenshot(path=str(OUT / "01_engine.png"))
             assert state == "ready", f"the engine did not start: {engine_text}"
 

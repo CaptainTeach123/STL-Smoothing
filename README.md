@@ -17,6 +17,28 @@ example relief model. Left: the background panels end on 6 different layers and 
 slicer draws layer edges (orange) all over them. Right: one layer, no lines. The rings on
 the pumpkin are its dome shape and are supposed to be there.*
 
+## Use it in your browser (no install)
+
+The same tool runs as a web page: choose an STL, set your layer height, and download the
+smoothed file, with a before/after picture you can zoom. **Your model never leaves your
+computer**; the Python engine ([Pyodide](https://pyodide.org), Python compiled to WebAssembly)
+runs inside the page. The first visit downloads the engine (tens of MB), which the browser
+then keeps.
+
+Once GitHub Pages is switched on (below) it lives at
+`https://<your-user>.github.io/STL-Smoothing/`, for example
+<https://captainteach123.github.io/STL-Smoothing/>.
+
+To switch it on: **Settings -> Pages -> Build and deployment -> Source: "Deploy from a
+branch"**, pick the branch (`main` once this is merged) and the folder **`/docs`**, then Save.
+GitHub Pages needs a public repository on a free plan. The site is plain files in `docs/`
+(no build step on GitHub), so it also works from any static host or from
+`python -m http.server --directory docs`.
+
+Limits of the web version: it handles models up to roughly 1.5 million triangles (a browser
+tab has less memory than a terminal; use the command line for bigger ones), and it writes
+binary STL.
+
 ## Install
 
 ```bash
@@ -157,5 +179,11 @@ python tests/bench.py algo.py [--holdout] --sample path/to/model.stl  # score an
 `tests/scenes.py` builds closed test models with known ground truth (wobbly slabs,
 panels around domes, ceilings, ramps between plateaus, intentional blocks, ...);
 `tests/metrics.py` emulates the slicer to measure the layer edges left on a surface.
+The web page is `docs/` (`index.html`, `app.js`, `worker.js`, `style.css`). It runs the Python
+package from `docs/py/`, a copy of the modules it needs, so after changing anything in `src/`
+run `python scripts/build_site.py` (a test fails if the copy is stale). Browser tests:
+`pip install ".[webtest]"` then `pytest tests/test_web_ui.py` (headless Chromium against a stub
+engine). `.github/workflows/site.yml` also runs the real engine end to end on GitHub.
+
 `tests/bench.py` takes any file defining `smooth(mesh, grid) -> (V, 3) array` and scores it
 on those scenes (and on a re-noised copy of a real model, if given with `--sample`).
