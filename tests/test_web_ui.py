@@ -713,3 +713,38 @@ def test_the_run_hint_explains_a_dead_engine(browser, site, payload):
     page.set_input_files("#file", str(payload["model"]))
     assert "could not start" in page.inner_text("#run-hint")
     ctx.close()
+
+
+def test_the_upload_box_is_on_the_first_screen(browser, site, payload):
+    """The 'I don't see how to use it' fix: the tool is above the fold on a laptop, with a visible call to action."""
+    page, ctx, _ = open_page(browser, site, payload)
+    page.set_viewport_size({"width": 1366, "height": 768})
+    ready(page)
+    box = page.locator("#drop").bounding_box()
+    assert box and box["y"] + box["height"] < 768, box
+    cta = page.locator("header a.button[href='#tool']")
+    assert cta.count() == 1 and cta.bounding_box()["y"] < 400
+    cta.click()
+    page.wait_for_timeout(300)
+    assert page.evaluate("location.hash") == "#tool"
+    ctx.close()
+
+
+def test_a_wrong_path_under_the_site_forwards_to_the_front_page(browser, site, payload):
+    """Serve docs/404.html the way Pages does for an unknown path, under a project-site base path."""
+    ctx = browser.new_context()
+    page = ctx.new_page()
+    html = (DOCS / "404.html").read_text()
+    seen = []
+
+    def serve(route):
+        url = route.request.url
+        seen.append(url)
+        if url.endswith("/STL-Smoothing/docs/"):
+            return route.fulfill(status=404, body=html, content_type="text/html")
+        return route.fulfill(status=200, body="<title>front</title>", content_type="text/html")
+
+    page.route("https://someone.github.io/**", serve)
+    page.goto("https://someone.github.io/STL-Smoothing/docs/")
+    page.wait_for_url("https://someone.github.io/STL-Smoothing/", timeout=5000)
+    ctx.close()

@@ -24,7 +24,8 @@ def test_site_python_sources_are_in_sync():
 
 
 def test_nojekyll_marker_exists():
-    # without it GitHub Pages' Jekyll step silently drops _detect.py and _deform.py
+    # without it GitHub Pages' Jekyll step silently drops every file whose name starts with an underscore
+    # (__init__.py, _compat.py, _detect.py, _deform.py); the site workflow does not use Jekyll, this guards branch publishing
     assert (DOCS / ".nojekyll").exists()
 
 
@@ -96,3 +97,10 @@ def test_publishing_from_the_repository_root_also_reaches_the_app():
     assert 'location.replace("docs/")' in html and 'href="docs/"' in html
     assert (ROOT / ".nojekyll").exists(), "Jekyll would drop the underscore modules from docs/py when publishing the root"
     assert (DOCS / "index.html").exists()
+
+
+def test_stale_deep_links_forward_to_the_front_page():
+    """The site used to live under /docs/ (Jekyll era); a 404 page sends such links to the app."""
+    html = (DOCS / "404.html").read_text()
+    assert 'location.replace(root)' in html and 'id="home"' in html
+    assert 'github\\.io' in html, "a project site's front page is /<repo>/, not /"

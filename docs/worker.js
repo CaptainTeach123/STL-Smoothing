@@ -26,16 +26,30 @@ function post(message, transfer) {
 
 async function startPyodide() {
   const failures = [];
+  let startFailure = null;
   for (const v of PYODIDE_VERSIONS) {
+    post({ type: "status", text: `Downloading the Python engine (Pyodide ${v})…` });
     try {
-      post({ type: "status", text: `Downloading the Python engine (Pyodide ${v})…` });
       importScripts(`${CDN}v${v}/full/pyodide.js`);
+    } catch (err) {
+      failures.push(`${v}: ${err && err.message ? err.message : err}`);
+      continue;
+    }
+    try {
       pyodide = await self.loadPyodide({ indexURL: `${CDN}v${v}/full/` });
       engineVersion = v;
       return;
     } catch (err) {
-      failures.push(`${v}: ${err && err.message ? err.message : err}`);
+      // the download worked, so this is the browser (too old, no WebAssembly) or its memory
+      startFailure = err && err.message ? err.message : String(err);
     }
+  }
+  if (startFailure !== null) {
+    throw new Error(
+      "The Python engine downloaded but could not start in this browser (" + startFailure + "). " +
+        "It needs Chrome 112, Firefox 112 or Safari 16.4 or newer and enough free memory; " +
+        "try closing other tabs or another browser."
+    );
   }
   throw new Error(
     "Could not download the Python engine from cdn.jsdelivr.net (" + failures.join("; ") + "). " +

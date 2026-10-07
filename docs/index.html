@@ -15,20 +15,11 @@
     <div class="wrap">
       <h1>STL Smoothing</h1>
       <p class="lead">Remove strangely offset layer lines from generated STL models. Runs entirely in your browser.</p>
+      <p class="cta"><a class="button primary" href="#tool">Smooth your STL</a> <span class="hint">Choose a file, set your layer height, download the result.</span></p>
     </div>
   </header>
 
   <main class="wrap">
-    <section class="card" aria-labelledby="what">
-      <h2 id="what">What it fixes</h2>
-      <p>Generated models (reliefs, lithophanes, marching-cubes or AI meshes) often have surfaces that are <em>meant</em> to be flat but wobble by a fraction of a millimetre. A slicer cuts such a surface at every layer it wanders through, so the printed top is covered in layer lines at odd places.</p>
-      <p>This tool finds those surfaces and moves their vertices, in <strong>z only</strong>, onto <strong>one</strong> layer boundary, so each of them prints on a single layer. Domes, ramps, walls and raised blocks are left alone.</p>
-      <figure class="example">
-        <img src="example.png" width="959" height="492" alt="Before and after: on the left the background panels of a bat-shaped relief end on six different layers and are covered in orange layer edges; on the right they end on one layer with no lines through them.">
-        <figcaption>Illustration: a synthetic “before” (smooth noise added to the flat panels of an example relief). The rings on the pumpkin are its dome shape and are supposed to be there.</figcaption>
-      </figure>
-    </section>
-
     <section class="card" id="tool" aria-labelledby="try" tabindex="-1">
       <h2 id="try">Try it on your model</h2>
       <p class="privacy"><strong>Private by design:</strong> your file is processed on this page and is never uploaded anywhere. (The Python engine itself, <a href="https://pyodide.org">Pyodide</a>, is third-party code that this page downloads from the jsDelivr CDN.)</p>
@@ -110,6 +101,16 @@
         <pre id="summary" tabindex="0"></pre>
       </details>
       <p class="hint">Always check the result in your slicer’s layer preview before you print.</p>
+    </section>
+
+    <section class="card" aria-labelledby="what">
+      <h2 id="what">What it fixes</h2>
+      <p>Generated models (reliefs, lithophanes, marching-cubes or AI meshes) often have surfaces that are <em>meant</em> to be flat but wobble by a fraction of a millimetre. A slicer cuts such a surface at every layer it wanders through, so the printed top is covered in layer lines at odd places.</p>
+      <p>This tool finds those surfaces and moves their vertices, in <strong>z only</strong>, onto <strong>one</strong> layer boundary, so each of them prints on a single layer. Domes, ramps, walls and raised blocks are left alone.</p>
+      <figure class="example">
+        <img src="example.png" width="959" height="492" alt="Before and after: on the left the background panels of a bat-shaped relief end on six different layers and are covered in orange layer edges; on the right they end on one layer with no lines through them.">
+        <figcaption>Illustration: a synthetic “before” (smooth noise added to the flat panels of an example relief). The rings on the pumpkin are its dome shape and are supposed to be there.</figcaption>
+      </figure>
     </section>
 
     <section class="card" aria-labelledby="limits">

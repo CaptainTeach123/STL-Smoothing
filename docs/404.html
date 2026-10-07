@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STL Smoothing</title>
+  <style>
+    body { font: 18px/1.5 system-ui, sans-serif; max-width: 34rem; margin: 15vh auto; padding: 0 16px; }
+    a { color: #1d4ed8; font-weight: 600; }
+    @media (prefers-color-scheme: dark) { body { background: #12151b; color: #e8ebf1; } a { color: #9db9ff; } }
+  </style>
+</head>
+<body>
+  <h1>STL Smoothing</h1>
+  <p>That page does not exist. The app is at the site's front page: <a id="home" href="/">open the app</a>.</p>
+  <script>
+    // On a GitHub project site (user.github.io/Repo/...) the front page is /Repo/; elsewhere it is /.
+    var parts = location.pathname.split("/");
+    var root = /\.github\.io$/i.test(location.hostname) && parts.length > 2 ? "/" + parts[1] + "/" : "/";
+    document.getElementById("home").href = root;
+    location.replace(root);
+  </script>
+</body>
+</html>

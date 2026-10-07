@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 
 const source = fs.readFileSync(new URL("../../docs/worker.js", import.meta.url), "utf8");
 
-function makeWorld({ failVersions = 0, failAll = false, processThrows = false, processResult = null, selftest = { ok: true }, manifestStatus = 200 } = {}) {
+function makeWorld({ failVersions = 0, failAll = false, failLoad = false, processThrows = false, processResult = null, selftest = { ok: true }, manifestStatus = 200 } = {}) {
   const posted = [];
   const fs_ = new Map();
   const writeOpts = [];
@@ -45,7 +45,7 @@ function makeWorld({ failVersions = 0, failAll = false, processThrows = false, p
   const fetched = [];
   const self = {
     postMessage(m, t) { posted.push({ m, t: t || [] }); },
-    loadPyodide: async () => pyodide,
+    loadPyodide: async () => { if (failLoad) throw new Error("CompileError: WebAssembly.instantiate(): expected magic word"); return pyodide; },
   };
   const ctx = vm.createContext({
     self,
@@ -98,6 +98,16 @@ const types = (w) => w.posted.map((p) => p.m.type);
   const fatal = w.posted.find((p) => p.m.type === "fatal");
   assert.ok(fatal, "a fatal message is posted");
   assert.match(fatal.m.message, /jsdelivr/i);
+  assert.ok(!types(w).includes("ready"));
+}
+
+// 3b. the download works but the engine cannot start (old browser, no memory): says so, not "check your connection"
+{
+  const w = makeWorld({ failLoad: true });
+  await w.send({ type: "init" });
+  const fatal = w.posted.find((p) => p.m.type === "fatal");
+  assert.match(fatal.m.message, /could not start in this browser.*CompileError/);
+  assert.doesNotMatch(fatal.m.message, /connection/);
   assert.ok(!types(w).includes("ready"));
 }
 

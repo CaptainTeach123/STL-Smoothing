@@ -4,8 +4,9 @@ Remove **strangely offset layer lines** from generated STL models.
 
 ### ▶ [Open the app in your browser](https://captainteach123.github.io/STL-Smoothing/)
 
-Nothing to install: pick your STL, enter your layer height, download the fixed file. (Needs GitHub
-Pages switched on for this repository, see [Use it in your browser](#use-it-in-your-browser-no-install).)
+Nothing to install: pick your STL, enter your layer height, download the fixed file. (If that
+address shows a 404, Pages is not switched on for this copy of the repository yet; see
+[how it gets published](#use-it-in-your-browser-no-install).)
 
 Generated models (reliefs, lithophanes, SDF / marching-cubes output, AI meshes) often
 contain surfaces that are *meant to be flat* but wobble by a fraction of a millimetre.
@@ -44,13 +45,17 @@ How it gets published: **Settings -> Pages -> Build and deployment -> Source: "G
 The workflow in `.github/workflows/site.yml` then publishes the `docs/` folder, exactly as committed,
 every time a push to the default branch passes all the tests (including the real engine in a browser);
 the Actions tab shows the run, and the Pages settings screen shows the address with a "Visit site"
-button. Do not add GitHub's suggested *Jekyll* workflow: it would publish this README as the home
-page instead of the app, and Jekyll drops the engine's `_detect.py` / `_deform.py` modules.
-The alternative, "Deploy from a branch" with the folder `/docs` (or `/ (root)`, whose `index.html`
-forwards to `docs/`), also works but publishes every push, tests or not. GitHub Pages needs a
-public repository on a free plan. The site is plain files, so it also works from any static host
-or from `python -m http.server --directory docs` (open it at `http://localhost:8000/`; browsers
-will not run the engine from a `file://` page).
+button. A red run leaves the previous site in place, and a page you opened in the last ten
+minutes may need a hard reload (Ctrl/Cmd+Shift+R) to show a new one. Do not add GitHub's suggested
+*Jekyll* workflow: it would publish this README as the home page instead of the app, and Jekyll
+drops every file whose name starts with an underscore (`__init__.py`, `_compat.py`, `_detect.py`,
+`_deform.py`), so the engine could not load. Keep the Source on "GitHub Actions" while the deploy
+job exists: with "Deploy from a branch" (folder `/docs`, or `/ (root)` whose `index.html` forwards
+to `docs/`) GitHub publishes every push itself, tests or not, and the deploy job fails on each push,
+so remove the job if you ever switch. GitHub Pages needs a public repository on a free plan. The
+site is plain files, so it also works from any static host or from
+`python -m http.server --directory docs` (open it at `http://localhost:8000/`; browsers will not
+run the engine from a `file://` page).
 
 Limits of the web version: a browser tab has less memory than a terminal, so use the command
 line for very large models. It writes binary STL, and it draws the before/after picture only
