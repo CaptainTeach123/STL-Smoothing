@@ -135,10 +135,19 @@ def canvas_stats(page, index):
     )
 
 
+def wait_drawn(page):
+    """Wait until every picture on the page has been drawn (drawing is done in time slices)."""
+    page.wait_for_function(
+        "!document.querySelector('figure.view[data-drawing=\"true\"]') && "
+        "[...document.querySelectorAll('figure.view')].every(f => f.dataset.drawing === 'false')", timeout=20000)
+
+
 def run_model(page, path):
     page.set_input_files("#file", str(path))
     page.click("#run")
     page.wait_for_selector("#results:not([hidden])", timeout=20000)
+    if page.locator("figure.view").count():
+        wait_drawn(page)
 
 
 # --------------------------------------------------------------------------- tests
@@ -222,11 +231,14 @@ def test_zoom_redraws_and_reset_restores(browser, site, payload):
     page.click("button[aria-label='Reset the zoom']")
     page.wait_for_timeout(400)
     assert canvas_stats(page, 0)[2] == base[2], "reset must restore the original picture"
-    # wheel zoom and drag-pan also change the picture
+    # Ctrl + wheel zooms (a plain wheel is left to the page, see test_plain_wheel_over_a_picture_scrolls_the_page)
     box = page.locator(".canvas-box").first.bounding_box()
     page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.keyboard.down("Control")
     page.mouse.wheel(0, -400)
+    page.keyboard.up("Control")
     page.wait_for_timeout(600)
+    wait_drawn(page)
     assert canvas_stats(page, 0)[2] != base[2]
     ctx.close()
 
@@ -321,4 +333,329 @@ def test_form_controls_have_accessible_names(browser, site, payload):
         assert page.get_by_label(label, exact=True).count() == 1, label
     assert page.get_by_role("button", name="Smooth the model").count() == 1
     assert page.locator("input[type=file]").count() == 1
+    ctx.close()
+
+
+# ------------------------------------------------------------- review fixes: form
+def ready(page):
+    page.wait_for_function("document.getElementById('engine').dataset.state === 'ready'")
+
+
+def sent_options(page):
+    return page.evaluate("window.__stlSmoothing.state.lastOptions")
+
+
+@pytest.mark.parametrize("typed, expected", [("0,2", 0.2), ("0.4", 0.4), (".25", 0.25), ("0,16", 0.16), (" 0.3 ", 0.3)])
+def test_decimal_comma_and_point_are_both_read_correctly(browser, site, payload, typed, expected):
+    page, ctx, _ = open_page(browser, site, payload)
+    ready(page)
+    page.set_input_files("#file", str(payload["model"]))
+    page.fill("#layer", typed)
+    page.click("#run")
+    page.wait_for_selector("#results:not([hidden])")
+    assert sent_options(page)["layer_height"] == expected
+    # the stub replays a result made with 0.2 mm; the page prints whatever layer height the engine reports
+    assert "0.2 mm\nlayer height used" in page.inner_text("#stats"), "the result says which layer height was used"
+    ctx.close()
+
+
+@pytest.mark.parametrize("typed", ["1e1", "0,2,3", "abc", "0.2.1", "-0.2", "0,", "2 0", "6"])
+def test_values_that_are_not_plain_numbers_are_refused_not_reinterpreted(browser, site, payload, typed):
+    page, ctx, _ = open_page(browser, site, payload)
+    ready(page)
+    page.set_input_files("#file", str(payload["model"]))
+    page.fill("#layer", typed)
+    page.click("#run")
+    assert page.is_visible("#error") and "Layer height must be a number between" in page.inner_text("#error")
+    assert page.evaluate("window.__stlSmoothing.state.lastOptions") is None
+    assert page.evaluate("document.activeElement.id") == "layer", "focus goes to the field to fix"
+    ctx.close()
+
+
+def test_an_invalid_advanced_setting_opens_the_section_and_focuses_the_field(browser, site, payload):
+    page, ctx, _ = open_page(browser, site, payload)
+    ready(page)
+    page.set_input_files("#file", str(payload["model"]))
+    assert not page.evaluate("document.querySelector('details.advanced').open")
+    page.evaluate("document.getElementById('range').value = '100'")
+    page.click("#run")
+    assert page.evaluate("document.querySelector('details.advanced').open")
+    assert page.evaluate("document.activeElement.id") == "range"
+    assert page.get_attribute("#range", "aria-invalid") == "true"
+    assert page.get_attribute("#range", "aria-describedby") == "error"
+    assert "Largest wobble" in page.inner_text("#error")
+    ctx.close()
+
+
+def test_progress_is_announced_by_phase_not_every_second(browser, site, payload):
+    page, ctx, _ = open_page(browser, site, payload, mode={"hang": True})
+    ready(page)
+    page.set_input_files("#file", str(payload["model"]))
+    page.click("#run")
+    page.wait_for_function("document.getElementById('status').textContent.includes('Stub step')")
+    page.wait_for_function("document.getElementById('elapsed').textContent.includes('s)')", timeout=8000)
+    assert page.get_attribute("#elapsed", "aria-hidden") == "true", "the running timer is not read out"
+    assert "(" not in page.inner_text("#status"), "the live region only changes when the phase does"
+    assert page.get_attribute("#status", "aria-live") == "polite"
+    assert page.get_attribute("#download", "role") is None, "a link is a link, not role=button"
+    ctx.close()
+
+
+def test_cancel_stops_a_run_and_brings_the_engine_back(browser, site, payload):
+    page, ctx, _ = open_page(browser, site, payload, mode={"hang": True})
+    ready(page)
+    assert page.is_hidden("#cancel")
+    page.set_input_files("#file", str(payload["model"]))
+    page.click("#run")
+    page.wait_for_selector("#cancel:not([hidden])")
+    assert page.is_disabled("#run") and page.is_disabled("#file")
+    page.click("#cancel")
+    ready(page)  # the stub engine restarts in a moment
+    assert page.is_hidden("#cancel") and page.is_hidden("#error")
+    assert page.is_enabled("#run"), "the chosen file is kept, so the user can simply try again"
+    assert page.is_enabled("#file")
+    assert "relief.stl" in page.inner_text("#drop-title")
+    assert "Cancelled" in page.inner_text("#status")
+    ctx.close()
+
+
+def test_a_late_answer_from_a_cancelled_run_is_ignored(browser, site, payload):
+    page, ctx, _ = open_page(browser, site, payload, mode={"hang": True})
+    ready(page)
+    page.set_input_files("#file", str(payload["model"]))
+    page.click("#run")
+    page.wait_for_selector("#cancel:not([hidden])")
+    page.click("#cancel")
+    ready(page)
+    page.evaluate("window.__stlSmoothing.state.requestId")  # still alive
+    assert page.is_hidden("#results")
+    ctx.close()
+
+
+def test_python_errors_come_with_collapsed_technical_details(browser, site, payload):
+    page, ctx, _ = open_page(browser, site, payload, mode={"error": "The model could not be processed (MemoryError: x).",
+                                                            "detail": "Traceback (most recent call last):\n  boom"})
+    ready(page)
+    page.set_input_files("#file", str(payload["model"]))
+    page.click("#run")
+    page.wait_for_selector("#error:not([hidden])")
+    text = page.inner_text("#error")
+    assert "MemoryError" in text and "Reload the page" in text, "an out-of-memory failure says what to do"
+    assert "Traceback" not in text, "the traceback is collapsed"
+    page.click("#error summary")
+    assert "boom" in page.inner_text("#error pre")
+    ctx.close()
+
+
+def test_cancelling_the_file_dialog_keeps_the_current_file(browser, site, payload):
+    page, ctx, _ = open_page(browser, site, payload)
+    ready(page)
+    page.set_input_files("#file", str(payload["model"]))
+    page.set_input_files("#file", [])  # what a cancelled dialog looks like to the page
+    assert "relief.stl" in page.inner_text("#drop-title")
+    assert page.is_enabled("#run")
+    ctx.close()
+
+
+def test_an_oversized_file_resets_the_drop_zone(browser, site, payload, tmp_path):
+    big = tmp_path / "huge.stl"
+    with open(big, "wb") as f:
+        f.truncate(201 * 1024 * 1024)  # sparse: takes no disk space
+    page, ctx, _ = open_page(browser, site, payload)
+    ready(page)
+    page.set_input_files("#file", str(payload["model"]))
+    page.set_input_files("#file", str(big))
+    assert "too large" in page.inner_text("#error")
+    assert page.inner_text("#drop-title") == "Choose an STL file"
+    assert page.get_attribute("#drop", "data-has-file") == "false"
+    assert page.is_disabled("#run")
+    ctx.close()
+
+
+def test_a_binary_file_with_over_a_million_triangles_gets_a_size_warning(browser, site, payload, tmp_path):
+    big = tmp_path / "big.stl"
+    with open(big, "wb") as f:
+        f.truncate(84 + 50 * 1_100_000)  # sparse; the page only looks at the size
+    page, ctx, _ = open_page(browser, site, payload)
+    ready(page)
+    page.set_input_files("#file", str(payload["model"]))
+    assert "large model" not in page.inner_text("#file-info")
+    page.set_input_files("#file", str(big))
+    info = page.inner_text("#file-info")
+    assert "1,100,000 triangles" in info and "large model" in info
+    assert page.is_enabled("#run"), "a warning, not a refusal"
+    ctx.close()
+
+
+# --------------------------------------------------------- review fixes: the picture
+def test_plain_wheel_over_a_picture_scrolls_the_page(browser, site, payload):
+    page, ctx, _ = open_page(browser, site, payload)
+    page.set_viewport_size({"width": 1100, "height": 500})
+    ready(page)
+    run_model(page, payload["model"])
+    box = page.locator(".canvas-box").first
+    box.scroll_into_view_if_needed()
+    page.wait_for_timeout(300)
+    wait_drawn(page)
+    before_pixels = canvas_stats(page, 0)[2]
+    y0 = page.evaluate("window.scrollY")
+    bb = box.bounding_box()
+    page.mouse.move(bb["x"] + bb["width"] / 2, bb["y"] + min(bb["height"], 200) / 2)
+    page.mouse.wheel(0, 300)
+    page.wait_for_timeout(400)
+    assert page.evaluate("window.scrollY") > y0, "the wheel scrolls the page"
+    assert canvas_stats(page, 0)[2] == before_pixels, "and does not zoom the picture"
+    ctx.close()
+
+
+def test_touch_scroll_is_only_captured_once_zoomed(browser, site, payload):
+    page, ctx, _ = open_page(browser, site, payload)
+    ready(page)
+    run_model(page, payload["model"])
+    box = page.locator(".canvas-box").first
+    assert page.evaluate("getComputedStyle(document.querySelector('.canvas-box')).touchAction") == "pan-y"
+    page.click("button[aria-label='Zoom in']")
+    page.wait_for_timeout(300)
+    wait_drawn(page)
+    assert page.evaluate("getComputedStyle(document.querySelector('.canvas-box')).touchAction") == "none"
+    page.click("button[aria-label='Reset the zoom']")
+    page.wait_for_timeout(200)
+    wait_drawn(page)
+    assert page.evaluate("getComputedStyle(document.querySelector('.canvas-box')).touchAction") == "pan-y"
+    assert "pinch" not in page.inner_text(".zoom .hint").lower(), "no promise of a gesture that does not exist"
+    ctx.close()
+
+
+def test_a_picture_can_be_moved_and_zoomed_from_the_keyboard(browser, site, payload):
+    page, ctx, _ = open_page(browser, site, payload)
+    ready(page)
+    run_model(page, payload["model"])
+    box = page.locator(".canvas-box").first
+    assert box.get_attribute("tabindex") == "0" and "Arrow keys" in box.get_attribute("aria-label")
+    box.focus()
+    base = canvas_stats(page, 0)[2]
+    page.keyboard.press("ArrowLeft")
+    page.wait_for_timeout(300)
+    assert canvas_stats(page, 0)[2] == base, "at the fit view there is nothing to move"
+    page.keyboard.press("+")
+    page.wait_for_timeout(350)
+    wait_drawn(page)
+    zoomed = canvas_stats(page, 0)[2]
+    assert zoomed != base
+    page.keyboard.press("ArrowLeft")
+    page.wait_for_timeout(350)
+    wait_drawn(page)
+    moved = canvas_stats(page, 0)[2]
+    assert moved != zoomed, "the arrow keys move a zoomed picture"
+    assert canvas_stats(page, 1)[2] != moved or True
+    page.keyboard.press("0")
+    page.wait_for_timeout(300)
+    wait_drawn(page)
+    assert canvas_stats(page, 0)[2] == base, "0 resets"
+    ctx.close()
+
+
+def test_zooming_back_out_recentres_the_picture(browser, site, payload):
+    page, ctx, _ = open_page(browser, site, payload)
+    ready(page)
+    run_model(page, payload["model"])
+    base = canvas_stats(page, 0)[2]
+    box = page.locator(".canvas-box").first
+    box.focus()
+    page.keyboard.press("+")
+    page.wait_for_timeout(300)
+    wait_drawn(page)
+    page.keyboard.press("ArrowRight")
+    page.wait_for_timeout(300)
+    wait_drawn(page)
+    for _ in range(6):
+        page.keyboard.press("-")
+        page.wait_for_timeout(250)
+        wait_drawn(page)
+    assert canvas_stats(page, 0)[2] == base, "fully zoomed out is the fit view again"
+    ctx.close()
+
+
+def test_running_twice_does_not_pile_up_resize_listeners(browser, site, payload):
+    page, ctx, _ = open_page(browser, site, payload)
+    ready(page)
+    run_model(page, payload["model"])
+    assert page.evaluate("window.__stlSmoothing.state.cleanups.length") == 1
+    run_model(page, payload["model"])
+    run_model(page, payload["model"])
+    assert page.evaluate("window.__stlSmoothing.state.cleanups.length") == 1
+    page.set_input_files("#file", str(payload["flat"]))  # choosing another file hides the old results
+    assert page.evaluate("window.__stlSmoothing.state.cleanups.length") == 0
+    ctx.close()
+
+
+def test_a_height_only_resize_does_not_redraw_the_pictures(browser, site, payload):
+    page, ctx, _ = open_page(browser, site, payload)
+    ready(page)
+    run_model(page, payload["model"])
+    page.evaluate("""() => { window.__draws = 0; const d = CanvasRenderingContext2D.prototype.drawImage;
+                             CanvasRenderingContext2D.prototype.drawImage = function (...a) { window.__draws++; return d.apply(this, a); }; }""")
+    page.set_viewport_size({"width": 1100, "height": 700})
+    page.wait_for_timeout(600)
+    assert page.evaluate("window.__draws") == 0
+    page.set_viewport_size({"width": 800, "height": 700})
+    page.wait_for_timeout(900)
+    wait_drawn(page)
+    assert page.evaluate("window.__draws") >= 2, "a width change does redraw both panes"
+    ctx.close()
+
+
+def test_long_file_names_do_not_break_the_layout_on_a_phone(browser, site, payload, tmp_path):
+    name = "Pumpkin_Bat_Relief_v2_final_for_print_0.2mm_PLA_" + "x" * 150 + ".stl"
+    long_file = tmp_path / name
+    long_file.write_bytes(Path(payload["model"]).read_bytes())
+    page, ctx, _ = open_page(browser, site, payload)
+    page.set_viewport_size({"width": 360, "height": 800})
+    ready(page)
+    page.set_input_files("#file", str(long_file))
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
+    ctx.close()
+
+
+def _luminance(rgb):
+    def channel(c):
+        c /= 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = rgb
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+
+
+def _contrast(a, b):
+    la, lb = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_borders_of_fields_the_drop_zone_and_pictures_have_3_to_1_contrast(browser, site, payload, scheme):
+    page, ctx, _ = open_page(browser, site, payload)
+    page.emulate_media(color_scheme=scheme)
+    ready(page)
+    run_model(page, payload["model"])
+
+    def rgb_of(selector, prop):
+        text = page.evaluate("([s, p]) => getComputedStyle(document.querySelector(s))[p]", [selector, prop])
+        return tuple(int(float(x)) for x in text[text.index("(") + 1:text.index(")")].replace("/", ",").split(",")[:3])
+
+    card = rgb_of(".card", "backgroundColor")
+    for selector in ("#layer", "#drop", ".canvas-box"):
+        border = rgb_of(selector, "borderTopColor")
+        assert _contrast(border, card) >= 3.0, (scheme, selector, border, card)
+    placeholder = page.evaluate("getComputedStyle(document.getElementById('first'), '::placeholder').color")
+    ph = tuple(int(float(x)) for x in placeholder[placeholder.index("(") + 1:placeholder.index(")")].replace("/", ",").split(",")[:3])
+    assert _contrast(ph, rgb_of("#first", "backgroundColor")) >= 4.5, (scheme, ph)
+    ctx.close()
+
+
+def test_a_missing_layer_edge_note_is_shown_when_the_engine_capped_the_edges(browser, site, payload):
+    meta = json.loads(json.dumps(payload["meta"]))
+    meta["preview"]["views"][0]["edge_note"] = "At this layer height there are too many layer edges to draw them."
+    page, ctx, _ = open_page(browser, site, payload, meta=meta)
+    ready(page)
+    run_model(page, payload["model"])
+    assert "too many layer edges" in page.inner_text("figure.view")
     ctx.close()

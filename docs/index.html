@@ -31,7 +31,7 @@
 
     <section class="card" id="tool" aria-labelledby="try" tabindex="-1">
       <h2 id="try">Try it on your model</h2>
-      <p class="privacy"><strong>Private by design:</strong> your file is processed on this page and is never uploaded anywhere.</p>
+      <p class="privacy"><strong>Private by design:</strong> your file is processed on this page and is never uploaded anywhere. (The Python engine itself, <a href="https://pyodide.org">Pyodide</a>, is third-party code that this page downloads from the jsDelivr CDN.)</p>
 
       <div id="engine" class="engine" data-state="loading" role="status" aria-live="polite">
         <span class="dot" aria-hidden="true"></span>
@@ -52,12 +52,12 @@
         <div class="grid">
           <div class="field">
             <label class="label" for="layer">Layer height (mm)</label>
-            <input type="number" id="layer" name="layer" min="0.005" max="5" step="any" value="0.2" inputmode="decimal" required>
+            <input type="text" id="layer" name="layer" value="0.2" inputmode="decimal" autocomplete="off" required>
             <p class="hint">Use your slicer’s setting.</p>
           </div>
           <div class="field">
             <label class="label" for="first">First layer height (mm)</label>
-            <input type="number" id="first" name="first" min="0.005" max="5" step="any" placeholder="same as above" inputmode="decimal">
+            <input type="text" id="first" name="first" placeholder="same as above" inputmode="decimal" autocomplete="off">
             <p class="hint">Only if it differs.</p>
           </div>
         </div>
@@ -67,12 +67,12 @@
           <div class="grid">
             <div class="field">
               <label class="label" for="range">Largest wobble to flatten (mm)</label>
-              <input type="number" id="range" name="range" min="0.05" max="20" step="any" value="2" inputmode="decimal">
+              <input type="text" id="range" name="range" value="2" inputmode="decimal" autocomplete="off">
               <p class="hint">A surface that varies by more than this is treated as an intentional shape. Lower it (for example 1) to protect gently curved plates and ramps.</p>
             </div>
             <div class="field">
               <label class="label" for="area">Ignore flat areas smaller than (mm²)</label>
-              <input type="number" id="area" name="area" min="0" max="100000" step="any" value="40" inputmode="decimal">
+              <input type="text" id="area" name="area" value="40" inputmode="decimal" autocomplete="off">
               <p class="hint">Tiny patches are left as they are.</p>
             </div>
           </div>
@@ -81,7 +81,9 @@
 
         <div class="actions">
           <button type="submit" id="run" class="primary" disabled>Smooth the model</button>
+          <button type="button" id="cancel" hidden>Cancel</button>
           <span id="status" class="status" role="status" aria-live="polite"></span>
+          <span id="elapsed" class="status" aria-hidden="true"></span>
         </div>
         <div id="error" class="alert" role="alert" hidden></div>
       </form>
@@ -92,7 +94,7 @@
       <div id="stats" class="stats"></div>
       <div id="notes"></div>
       <div class="actions">
-        <a id="download" class="button primary" role="button" download hidden>Download the smoothed STL</a>
+        <a id="download" class="button primary" download hidden>Download the smoothed STL</a>
         <span class="hint" id="download-note"></span>
       </div>
       <div id="figures"></div>
@@ -109,7 +111,7 @@
         <li>Assumes the model is in <strong>millimetres with z up</strong>; heights are measured from its lowest point, where a slicer puts the bed.</li>
         <li>Only horizontal surfaces (tops and ceilings) are changed. A gently crowned plate or shallow ramp that varies by less than the setting above looks the same as a wobbly flat surface; lower the setting to protect it.</li>
         <li>Surfaces that wobble by about 1.2&nbsp;mm or less are the reliable case; towards 2&nbsp;mm a surface can end up only partly flattened.</li>
-        <li>Very large models (over about 1.5 million triangles) can exhaust a browser tab’s memory. Use the <a href="https://github.com/CaptainTeach123/STL-Smoothing">command-line version</a> for those.</li>
+        <li>Very large models (over about 1 million triangles) can exhaust a browser tab’s memory. Use the <a href="https://github.com/CaptainTeach123/STL-Smoothing">command-line version</a> for those.</li>
       </ul>
     </section>
   </main>

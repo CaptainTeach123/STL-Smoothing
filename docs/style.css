@@ -4,6 +4,7 @@
   --ink: #1b1f27;
   --muted: #5a6372;
   --line: #d9dde4;
+  --line-strong: #7b8494;  /* 3:1 or better on the card: borders of fields, the drop zone and pictures */
   --accent: #2563eb;
   --accent-ink: #ffffff;
   --accent-soft: #e8efff;
@@ -24,6 +25,7 @@
     --ink: #e8ebf1;
     --muted: #a3acbb;
     --line: #333b49;
+    --line-strong: #7f8aa0;
     --accent: #6f9bff;
     --accent-ink: #0b1220;
     --accent-soft: #223153;
@@ -109,22 +111,24 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
 .hint { margin: 4px 0 0; color: var(--muted); font-size: 0.9rem; }
 .hint:empty { display: none; }
 
-input[type="number"] {
+input[type="text"] {
   width: 100%; max-width: 16rem; padding: 9px 10px; font: inherit; color: var(--ink);
-  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  background: var(--card); border: 1px solid var(--line-strong); border-radius: 8px;
 }
-input[type="number"][aria-invalid="true"] { border-color: var(--bad); }
+input[type="text"]::placeholder { color: var(--muted); opacity: 1; }
+input[aria-invalid="true"] { border-color: var(--bad); border-width: 2px; }
 
 .grid { display: grid; gap: 0 20px; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
 
 .drop {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   min-height: 7.5rem; padding: 16px; text-align: center; cursor: pointer;
-  border: 2px dashed var(--line); border-radius: 12px; background: var(--bg);
+  border: 2px dashed var(--line-strong); border-radius: 12px; background: var(--bg);
 }
 .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
 .drop input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
-.drop-title { font-weight: 600; font-size: 1.05rem; }
+.drop-title { font-weight: 600; font-size: 1.05rem; overflow-wrap: anywhere; max-width: 100%; }
+#file-info { overflow-wrap: anywhere; }
 .drop-hint { color: var(--muted); font-size: 0.9rem; }
 .drop[data-has-file="true"] { border-style: solid; }
 
@@ -143,9 +147,14 @@ button, .button {
 button.primary, .button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .status { color: var(--muted); font-size: 0.95rem; }
+#elapsed { margin-left: -6px; }
 
 .alert { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: var(--bad-bg); color: var(--ink); border: 1px solid var(--bad); }
-.alert[hidden], #results[hidden], #download[hidden] { display: none; }
+[hidden] { display: none !important; }  /* author display rules (buttons, flex boxes) must not override the hidden attribute */
+.alert p { margin: 0; }
+.alert details { margin-top: 8px; }
+.alert summary { cursor: pointer; font-weight: 600; }
+.alert pre { margin: 6px 0 0; max-height: 14rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 0.8rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .note { margin: 0 0 10px; padding: 10px 12px; border-radius: 8px; background: var(--warn-bg); border: 1px solid var(--warn); }
 
 /* ----------------------------------------------------------------- results */
@@ -156,14 +165,15 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 figure.view { margin: 16px 0 0; }
 figure.view > h3 { margin: 0 0 8px; font-size: 1.05rem; }
-.panes { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); }
+.panes { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr)); }
 .pane h4 { margin: 0 0 6px; font-size: 0.95rem; }
 .pane h4 small { display: block; color: var(--muted); font-weight: 400; font-size: 0.85rem; }
 .canvas-box {
-  position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 8px;
-  background: var(--canvas); touch-action: none; cursor: grab; line-height: 0;
+  position: relative; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 8px;
+  background: var(--canvas); touch-action: pan-y; line-height: 0;
 }
-.canvas-box.dragging { cursor: grabbing; }
+.canvas-box.zoomed { touch-action: none; cursor: grab; }  /* zoomed: a swipe moves the picture; at 1x it scrolls the page */
+.canvas-box.zoomed.dragging { cursor: grabbing; }
 .canvas-box canvas { display: block; transform-origin: 0 0; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 10px 0 0; padding: 0; list-style: none; font-size: 0.85rem; color: var(--muted); }
 .legend li { display: flex; align-items: center; gap: 6px; }

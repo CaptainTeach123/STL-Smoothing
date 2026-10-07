@@ -22,8 +22,9 @@ self.onmessage = async (event) => {
     self.__lastRun = { size: msg.buffer.byteLength, options: msg.options };
     self.postMessage({ type: "progress", id: msg.id, text: "Stub step" });
     const mode = await fetchJson("mode.json");
+    if (mode.hang) return;  // never answers, like a run that takes forever
     if (mode.error) {
-      self.postMessage({ type: "error", id: msg.id, message: mode.error });
+      self.postMessage({ type: "error", id: msg.id, message: mode.error, detail: mode.detail });
       return;
     }
     const meta = await fetchJson("meta.json");
