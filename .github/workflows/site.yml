@@ -10,10 +10,16 @@ on:
 permissions:
   contents: read
 
+# a newer push to the same branch replaces a run that is still going
+concurrency:
+  group: site-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   tests:
     name: tests (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -24,11 +30,14 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: pip install -e ".[dev]"
-      - run: pytest
+      - run: pytest -rs
 
   browser-ui:
     name: browser UI tests (stub engine)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      STL_REQUIRE_BROWSER: "1"  # a missing browser or node fails these tests instead of skipping them
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -36,7 +45,7 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev,webtest]"
       - run: python -m playwright install --with-deps chromium
-      - run: pytest tests/test_web_ui.py tests/test_site.py -v
+      - run: pytest tests/test_web_ui.py tests/test_site.py -v -rs
 
   browser-engine:
     name: browser engine (real Pyodide)
@@ -59,4 +68,35 @@ jobs:
         with:
           name: e2e-output
           path: e2e-out
+          retention-days: 14
+
+  # Informational: how big a model the real engine can take in a browser tab. Runs on manual dispatch or
+  # when the commit message contains [large]; a failure here does not fail the workflow.
+  browser-engine-large:
+    name: browser engine, large models (informational)
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[large]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev,webtest]"
+      - run: python -m playwright install --with-deps chromium
+      - name: Real-engine test with 445k, 1.0M and 1.46M triangles
+        env:
+          E2E_OUT: e2e-large-out
+          E2E_SIZES: "0.3,0.2,0.165"
+          E2E_EXTRAS: "0"
+        run: python tests/e2e_pyodide.py
+      - name: Keep the log and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-large-output
+          path: |
+            e2e-large-out/*.log
+            e2e-large-out/*.png
           retention-days: 14

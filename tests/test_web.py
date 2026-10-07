@@ -237,4 +237,4 @@ def test_file_errors_are_sentences(tmp_path):
     p.write_bytes(b"this is not an stl file")
     meta, *_ = process(p, tmp_path)
     assert meta["error"].startswith("That file could not be read: not a recognisable")
-    assert meta["error"].endswith("STL file?")
+    assert meta["error"].endswith("STL file.")

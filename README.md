@@ -30,14 +30,18 @@ Once GitHub Pages is switched on (below) it lives at
 <https://captainteach123.github.io/STL-Smoothing/>.
 
 To switch it on: **Settings -> Pages -> Build and deployment -> Source: "Deploy from a
-branch"**, pick the branch (`main` once this is merged) and the folder **`/docs`**, then Save.
-GitHub Pages needs a public repository on a free plan. The site is plain files in `docs/`
-(no build step on GitHub), so it also works from any static host or from
-`python -m http.server --directory docs`.
+branch"**, pick the branch you want to publish (your default branch; `main` if you have one)
+and the folder **`/docs`**, then Save. The first deploy takes a minute or two. GitHub Pages
+needs a public repository on a free plan. The site is plain files in `docs/` (no build step on
+GitHub), so it also works from any static host or from `python -m http.server --directory docs`
+(open it at `http://localhost:8000/`; browsers will not run the engine from a `file://` page).
+With "Deploy from a branch" every push to that branch goes live, so publish a branch whose CI
+(see below) is green.
 
-Limits of the web version: it handles models up to roughly 1.5 million triangles (a browser
-tab has less memory than a terminal; use the command line for bigger ones), and it writes
-binary STL.
+Limits of the web version: a browser tab has less memory than a terminal, so use the command
+line for very large models (the page warns above 1 million triangles and refuses files over
+200 MB). It writes binary STL. A model of 111,000 triangles took about 2 seconds in the browser
+on a GitHub Actions runner.
 
 ## Install
 
@@ -171,7 +175,7 @@ stlio.write_stl("fixed.stl", Mesh(result.verts, mesh.faces).to_triangles())
 
 ```bash
 pip install -e ".[dev]"
-pytest                                       # ~190 unit + behaviour tests (about 40 s)
+pytest                                       # about 280 tests (a couple of minutes with the browser ones)
 STL_SMOOTHING_SAMPLE=path/to/model.stl pytest tests/test_flatten.py   # + real-model test
 python tests/bench.py algo.py [--holdout] --sample path/to/model.stl  # score an algorithm
 ```

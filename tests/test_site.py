@@ -2,6 +2,7 @@
 
 import json
 import re
+import os
 import shutil
 import subprocess
 import sys
@@ -80,6 +81,8 @@ def test_html_is_self_contained_and_safe():
 def test_worker_protocol_under_node():
     node = shutil.which("node")
     if not node:
+        if os.environ.get("STL_REQUIRE_BROWSER") == "1":
+            pytest.fail("node is required here (STL_REQUIRE_BROWSER=1) but is not installed")
         pytest.skip("node is not installed")
     r = subprocess.run([node, str(ROOT / "tests" / "web" / "worker_protocol.mjs")], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stdout + r.stderr

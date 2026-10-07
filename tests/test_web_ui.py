@@ -16,7 +16,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-playwright_sync = pytest.importorskip("playwright.sync_api")
+# CI jobs that install the browser set STL_REQUIRE_BROWSER=1, so a missing browser fails instead of
+# silently skipping every test in this file.
+REQUIRE_BROWSER = os.environ.get("STL_REQUIRE_BROWSER") == "1"
+try:
+    import playwright.sync_api as playwright_sync
+except ImportError:
+    if REQUIRE_BROWSER:
+        raise
+    pytest.skip("playwright is not installed (pip install '.[webtest]')", allow_module_level=True)
 
 import scenes  # noqa: E402
 from stl_smoothing import stlio, web  # noqa: E402
@@ -43,6 +51,8 @@ def browser():
         except Exception:
             exe = _chromium_path()
             if not exe:
+                if REQUIRE_BROWSER:
+                    pytest.fail("no Chromium available for Playwright (STL_REQUIRE_BROWSER=1)")
                 pytest.skip("no Chromium available for Playwright")
             b = p.chromium.launch(executable_path=exe, args=["--no-sandbox"])
         yield b

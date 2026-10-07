@@ -44,7 +44,7 @@ def _file_error(exc: Exception) -> str:
     text = str(exc)
     if text.startswith("the file: "):
         text = text[len("the file: "):]
-    return f"That file could not be read: {text}. Is it a binary or ASCII STL file?"
+    return f"That file could not be read: {text}."
 
 
 def process(path_in: str, path_out: str, options_json: str = "{}", progress=None, preview_dir: str | None = None) -> str:

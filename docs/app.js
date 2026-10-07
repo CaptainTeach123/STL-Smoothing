@@ -33,6 +33,11 @@
   }
 
   function startEngine() {
+    if (location.protocol === "file:") {
+      setEngine("error", "Browsers do not run the engine from a file on disk. Open the hosted page, or serve this folder " +
+        "(for example: python -m http.server --directory docs) and open http://localhost:8000/.");
+      return;
+    }
     try {
       worker = new Worker("worker.js");
     } catch (err) {
