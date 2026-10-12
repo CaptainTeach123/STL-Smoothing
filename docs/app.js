@@ -361,7 +361,10 @@
     els.stats.append(stat(seconds + " s", "time taken"));
 
     if (!meta.closed) {
-      els.notes.append(note("The mesh is not closed (" + fmt.format(meta.open_edges) + " open edges). Results may be incomplete."));
+      var problems = [];
+      if (meta.open_edges) problems.push(fmt.format(meta.open_edges) + " open edges");
+      if (meta.non_manifold_edges) problems.push(fmt.format(meta.non_manifold_edges) + " edges shared by more than two triangles");
+      els.notes.append(note("The mesh is not watertight (" + problems.join(", ") + "). Results may be incomplete there."));
     }
     if (meta.flipped > 0) {
       els.notes.append(note(meta.flipped + " faces would have flipped; they were left as they were."));
@@ -392,7 +395,7 @@
           : info.dtype === "uint32" ? new Uint32Array(buf) : new Uint8Array(buf);
       });
       meta.preview.views.forEach(function (view) {
-        els.figures.append(buildFigure(view, data, meta.preview.bbox, meta.layer_height));
+        els.figures.append(buildFigure(view, data, view.bbox || meta.preview.bbox, meta.layer_height));
       });
     } else if (msg.output && !meta.preview_skipped) {
       els.figures.append(note("No surface changed layers; the model was only nudged slightly, so there is no picture."));
@@ -460,12 +463,13 @@
     edge.append(line, document.createTextNode("layer edge (a contour line in the slicer)"));
     legend.append(edge);
     fig.append(legend);
-    if (view.edge_note) {
-      var edgeNote = document.createElement("p");
-      edgeNote.className = "hint";
-      edgeNote.textContent = view.edge_note;
-      fig.append(edgeNote);
-    }
+    [view.cut_note, view.edge_note].forEach(function (text) {
+      if (!text) return;
+      var p = document.createElement("p");
+      p.className = "hint";
+      p.textContent = text;
+      fig.append(p);
+    });
 
     var zoom = document.createElement("div");
     zoom.className = "zoom";

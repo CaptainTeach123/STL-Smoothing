@@ -238,3 +238,46 @@ def test_file_errors_are_sentences(tmp_path):
     meta, *_ = process(p, tmp_path)
     assert meta["error"].startswith("That file could not be read: not a recognisable")
     assert meta["error"].endswith("STL file.")
+
+
+# ------------------------------------------------- a model standing on its flattened base (a lamp on a pedestal)
+def _lamp_on_base(tmp_path):
+    """A wobbly base with a tall block standing over its middle: from above, the block hides most of
+    the base, as the lamp of a Bat-Signal model hides its pedestal."""
+    base = scenes.wavy_slab(cell=2.0).mesh
+    lamp = scenes.heightfield_solid(20, 80, 15, 65, 4.0, lambda x, y: 60.0 + 0 * x, 30.0)
+    tris = np.concatenate([base.to_triangles(), lamp.to_triangles()])
+    p = tmp_path / "lamp.stl"
+    stlio.write_stl(p, tris)
+    return p
+
+
+def test_the_picture_leaves_out_what_stands_over_the_flattened_surface(tmp_path):
+    meta, _, pv, _ = process(_lamp_on_base(tmp_path), tmp_path)
+    assert meta["flattened"] == 1
+    view = meta["preview"]["views"][0]
+    assert "left out of this picture" in view["cut_note"]
+    order = np.fromfile(pv / "top_after_order.bin", dtype=np.uint32)
+    d = stlio.read_stl(_lamp_on_base(tmp_path))
+    zc = d.tris.mean(axis=1)[:, 2]
+    # the drawn faces are welded-mesh faces in file order here (no faces were merged), so heights line up
+    assert zc[order].max() < 20, "the block's top (z 60) must not be drawn over the base"
+
+
+def test_a_dome_beside_the_panel_is_not_cut_away(tmp_path):
+    sc = scenes.panel_with_dome(cell=1.0)
+    p = tmp_path / "relief.stl"
+    stlio.write_stl(p, sc.mesh.to_triangles())
+    meta, *_ = process(p, tmp_path)
+    assert "cut_note" not in meta["preview"]["views"][0]
+
+
+def test_several_flattened_surfaces_read_as_one_layer_each(tmp_path):
+    sc = scenes.terraces_with_ramp(cell=1.0)
+    p = tmp_path / "terraces.stl"
+    stlio.write_stl(p, sc.mesh.to_triangles())
+    meta, *_ = process(p, tmp_path)
+    view = meta["preview"]["views"][0]
+    assert view["before_text"].startswith("2 flattened surfaces; they ended on")
+    assert view["after_text"] == "Each now ends on one layer: 10.00 and 12.00 mm"
+    assert "different layers" not in view["after_text"]

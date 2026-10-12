@@ -14,7 +14,8 @@ import numpy as np
 
 from .layers import LayerGrid
 from .mesh import Mesh
-from .preview import EDGE_COLOUR, describe_levels, level_colours, nearest_level, region_levels
+from .preview import (EDGE_COLOUR, cut_limit, describe_levels, hiding_faces, level_colours, nearest_level,
+                      region_bbox, region_levels, view_texts)
 from .slicing import contour_segments
 
 
@@ -47,22 +48,32 @@ def render_comparison(
     dpi: int = 110,
     before_text: str | None = None,
     after_text: str | None = None,
+    labels: np.ndarray | None = None,
 ) -> dict:
     """Render ``before`` and ``after`` side by side and save a PNG.
 
     ``region`` is a boolean face mask (same faces in both meshes) selecting the
-    surfaces to colour.  ``view`` is ``"top"`` (up-facing) or ``"bottom"``.
-    Returns a small dict with the layer ends found before and after.
+    surfaces to colour.  ``view`` is ``"top"`` (up-facing) or ``"bottom"``.  ``labels`` (the plateau
+    index of every face) gives per-surface captions.  Geometry that would hide the surfaces from the
+    viewer (more than a margin above them in a top view) is left out, and the footnote says so.
+    Returns a small dict with the layer ends found before and after, and per-surface layer counts.
     """
     plt, LineCollection, PolyCollection, Patch, Line2D = _import_mpl()
     sign = 1.0 if view == "top" else -1.0
     lv_before = region_levels(before, grid, region)
     lv_after = region_levels(after, grid, region)
+    per_before = per_after = None
+    if labels is not None and before_text is None and after_text is None:
+        before_text, after_text, per_before, per_after = view_texts(
+            before, after, grid, labels, region, "surface" if sign > 0 else "ceiling")
+    limit, margin = cut_limit(before, after, grid, region, int(sign))
+    cut_any = False
     all_levels = np.unique(np.concatenate([lv_before, lv_after]))
     from matplotlib.colors import to_rgba
 
     colour_of = {lv: to_rgba(c) for lv, c in level_colours(all_levels, lv_after).items()}
-    lo, hi = before.verts[:, :2].min(0), before.verts[:, :2].max(0)
+    box = region_bbox(before, region)  # frame the flattened surfaces, not the whole model
+    lo, hi = np.array(box[:2]), np.array(box[2:])
     span = np.maximum(hi - lo, 1e-9)
     fig_h = 7.0
     fig_w = 2 * fig_h * span[0] / span[1]
@@ -74,9 +85,13 @@ def render_comparison(
         (axes[1], after, "After", lv_after),
     ):
         n, _ = mesh.face_normals_areas()
-        facing = sign * n[:, 2] > 0.02
-        idx = np.flatnonzero(facing)
         zc = mesh.face_centroids()[:, 2]
+        facing = sign * n[:, 2] > 0.02
+        beyond = hiding_faces(mesh, region, facing & (sign * zc > sign * limit))
+        if beyond.any():
+            facing = facing & ~beyond
+            cut_any = True
+        idx = np.flatnonzero(facing)
         order = idx[np.argsort(sign * zc[idx])]  # far to near
         shade = 0.40 + 0.35 * np.clip(sign * n[order, 2], 0, 1)
         colours = np.stack([shade, shade, shade, np.ones_like(shade)], axis=1)
@@ -99,6 +114,11 @@ def render_comparison(
         ax.axis("off")
         text = before_text if title == "Before" else after_text
         ax.set_title(f"{title}\n{text or describe_levels(levels, what)}", loc="left", fontsize=11)
+    if cut_any:
+        cut_text = (f"Parts of the model more than {margin:g} mm "
+                    f"{'above the flattened surfaces' if sign > 0 else 'below the flattened ceilings'} are left out "
+                    "so the surfaces can be seen.")
+        footnote = f"{footnote}  {cut_text}" if footnote else cut_text
     handles = [
         Patch(facecolor=colour_of[lv], label=f"{lv:.2f} mm") for lv in all_levels
     ]
@@ -117,4 +137,5 @@ def render_comparison(
     fig.subplots_adjust(left=0.01, right=0.99, top=0.9, bottom=0.14 if footnote else 0.12, wspace=0.04)
     fig.savefig(out_path)
     plt.close(fig)
-    return {"before_layers": lv_before.tolist(), "after_layers": lv_after.tolist()}
+    return {"before_layers": lv_before.tolist(), "after_layers": lv_after.tolist(),
+            "per_surface_before": per_before, "per_surface_after": per_after, "cut": cut_any}

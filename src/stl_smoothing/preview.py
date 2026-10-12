@@ -80,6 +80,102 @@ def nearest_level(levels: np.ndarray, ends: np.ndarray) -> np.ndarray:
     return np.where(use_left, left, pos)
 
 
+def _join(items) -> str:
+    items = [str(x) for x in items]
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def view_texts(before: Mesh, after: Mesh, grid: LayerGrid, labels: np.ndarray, mask: np.ndarray,
+               noun: str = "surface") -> tuple[str, str, list, list]:
+    """Captions for the Before and After pictures, per flattened surface (``labels`` = plateau index
+    per face, ``mask`` = the faces shown).  Several surfaces at different heights each ending on one
+    layer must read as success, not as "3 different layers".  Also returns the layer counts."""
+    ids = sorted({int(i) for i in labels[mask]})
+    lv_b = [region_levels(before, grid, mask & (labels == i)) for i in ids]
+    lv_a = [region_levels(after, grid, mask & (labels == i)) for i in ids]
+    nb, na = [len(v) for v in lv_b], [len(v) for v in lv_a]
+    if len(ids) == 1:
+        b, a = lv_b[0], lv_a[0]
+        before_text = (f"The flattened {noun} ended on {nb[0]} layers ({b[0]:.2f}–{b[-1]:.2f} mm)" if nb[0] > 1
+                       else f"The flattened {noun} ended on one layer ({b[0]:.2f} mm)" if nb[0] else f"No {noun} found")
+        after_text = (f"It now ends on one layer ({a[0]:.2f} mm)" if na[0] == 1
+                      else f"It now ends on {na[0]} layers ({a[0]:.2f}–{a[-1]:.2f} mm)" if na[0] else "")
+    else:
+        before_text = f"{len(ids)} flattened {noun}s; they ended on {_join(nb)} layers"
+        if all(k == 1 for k in na):
+            after_text = "Each now ends on one layer: " + _join(f"{v[0]:.2f}" for v in sorted(lv_a, key=lambda v: v[0])) + " mm"
+        else:
+            after_text = f"They now end on {_join(na)} layers"
+    return before_text, after_text, nb, na
+
+
+def cut_limit(before: Mesh, after: Mesh, grid: LayerGrid, mask: np.ndarray, sign: int):
+    """Height beyond which geometry can hide the flattened surfaces from the viewer (above them for a top
+    view, below them for a ceiling view), and the margin used; :func:`hiding_faces` decides which of
+    the faces beyond it really are in the way.  A tall model standing on a flat base
+    would otherwise show only its own top in a picture meant to show the base."""
+    margin = max(1.0, 3 * grid.layer_height)
+    z = np.concatenate([m.verts[m.faces[mask]][:, :, 2].ravel() for m in (before, after)])
+    return (float(z.max()) + margin if sign > 0 else float(z.min()) - margin), margin
+
+
+def _footprint(mesh: Mesh, faces: np.ndarray, cell: float, origin: np.ndarray, shape) -> np.ndarray:
+    """Boolean xy grid of the cells the selected triangles cover (sampled at about the cell size)."""
+    grid = np.zeros(shape, dtype=bool)
+    tri = mesh.verts[mesh.faces[faces]][:, :, :2]
+    if len(tri) == 0:
+        return grid
+    edge = np.max(np.linalg.norm(tri - np.roll(tri, 1, axis=1), axis=2), axis=1)
+    k_all = np.clip(np.ceil(edge / cell).astype(int), 1, 64)
+    for k in np.unique(k_all):
+        t = tri[k_all == k]
+        i, j = np.meshgrid(np.arange(k + 1), np.arange(k + 1), indexing="ij")
+        keep = (i + j) <= k
+        u, v = i[keep] / k, j[keep] / k  # barycentric samples, about one per cell
+        pts = (t[:, None, 0] + u[None, :, None] * (t[:, None, 1] - t[:, None, 0])
+               + v[None, :, None] * (t[:, None, 2] - t[:, None, 0])).reshape(-1, 2)
+        ij = np.floor((pts - origin) / cell).astype(int)
+        ok = (ij[:, 0] >= 0) & (ij[:, 1] >= 0) & (ij[:, 0] < shape[0]) & (ij[:, 1] < shape[1])
+        grid[ij[ok, 0], ij[ok, 1]] = True
+    return grid
+
+
+def hiding_faces(mesh: Mesh, region: np.ndarray, candidates: np.ndarray, min_share: float = 0.02) -> np.ndarray:
+    """Which ``candidates`` lie over (in x and y) the ``region`` faces, so a picture taken along z would
+    show them instead of the region.  Nothing is reported unless they would hide at least ``min_share``
+    of the region: a dome beside a flattened panel (touching only its edge) does not hide it; a lamp
+    standing on a flattened base does."""
+    out = np.zeros(len(candidates), dtype=bool)
+    if not candidates.any() or not region.any():
+        return out
+    lo, hi = mesh.verts[:, :2].min(0), mesh.verts[:, :2].max(0)
+    cell = max(0.5, float((hi - lo).max()) / 1024)
+    shape = tuple((np.floor((hi - lo) / cell).astype(int) + 2).tolist())
+    cover = _footprint(mesh, region, cell, lo, shape)
+    over = _footprint(mesh, candidates, cell, lo, shape)
+    if (cover & over).sum() < min_share * cover.sum():
+        return out
+    idx = np.flatnonzero(candidates)
+    tri = mesh.verts[mesh.faces[idx]][:, :, :2]
+    pts = np.concatenate([tri, tri.mean(1, keepdims=True)], axis=1)  # 3 corners and the centroid
+    ij = np.clip(np.floor((pts - lo) / cell).astype(int), 0, np.array(shape) - 1)
+    out[idx] = cover[ij[..., 0], ij[..., 1]].any(axis=1)
+    return out
+
+
+def region_bbox(mesh: Mesh, mask: np.ndarray) -> list:
+    """xy box ``[x0, y0, x1, y1]`` a picture should show: the flattened faces with some room around them,
+    inside the model's own box.  A small surface on a big model is then large enough to see."""
+    lo, hi = mesh.verts[:, :2].min(0), mesh.verts[:, :2].max(0)
+    xy = mesh.verts[mesh.faces[mask]][:, :, :2].reshape(-1, 2)
+    if len(xy) == 0:
+        return [float(lo[0]), float(lo[1]), float(hi[0]), float(hi[1])]
+    rlo, rhi = xy.min(0), xy.max(0)
+    pad = np.maximum(5.0, 0.15 * (rhi - rlo))
+    blo, bhi = np.maximum(rlo - pad, lo), np.minimum(rhi + pad, hi)
+    return [float(blo[0]), float(blo[1]), float(bhi[0]), float(bhi[1])]
+
+
 def describe_levels(levels: np.ndarray, what: str) -> str:
     if len(levels) == 0:
         return f"No {what} found"
@@ -131,21 +227,31 @@ def build_preview(before: Mesh, after: Mesh, grid: LayerGrid, res: FlattenResult
         lv_after = region_levels(after, grid, mask)
         levels = np.unique(np.concatenate([lv_before, lv_after]))
         colours = level_colours(levels, lv_after)
+        before_text, after_text, _, _ = view_texts(before, after, grid, res.face_plateau, mask,
+                                                   "surface" if sign > 0 else "ceiling")
+        limit, margin = cut_limit(before, after, grid, mask, sign)
         view = {
             "key": key,
             "what": what,
             "levels": [float(v) for v in levels],
             "colours": [colours[float(v)] for v in levels],
-            "before_text": describe_levels(lv_before, what),
-            "after_text": describe_levels(lv_after, what),
+            "before_text": before_text,
+            "after_text": after_text,
             "before_layers": int(len(lv_before)),
             "after_layers": int(len(lv_after)),
             "mirror_x": sign < 0,
+            "bbox": region_bbox(before, mask),
         }
         for name, mesh in (("before", before), ("after", after)):
             nz = n_of[name][:, 2]
             zc = zc_of[name]
             facing = sign * nz > 0.02
+            beyond = hiding_faces(mesh, mask, facing & (sign * zc > sign * limit))
+            if beyond.any():  # cut away what hides the flattened surfaces (a model standing on its base)
+                facing = facing & ~beyond
+                view["cut_note"] = (f"Parts of the model more than {margin:g} mm "
+                                    f"{'above the flattened surfaces' if sign > 0 else 'below the flattened ceilings'} "
+                                    "are left out of this picture so the surfaces can be seen.")
             idx = np.flatnonzero(facing)
             order = idx[np.argsort(sign * zc[idx], kind="stable")].astype(np.uint32)  # far to near
             shade = (255.0 * (0.40 + 0.35 * np.clip(sign * nz, 0, 1))).astype(np.uint8)

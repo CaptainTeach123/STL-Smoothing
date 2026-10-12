@@ -226,12 +226,18 @@ def _write_reports(base: Path, before: Mesh, after: Mesh, grid: LayerGrid, res: 
         n_here = len({int(i) for i in res.face_plateau[mask]})
         target = base if facing == 1 or not has_tops else base.with_name(base.stem + "_ceilings" + base.suffix)
         try:
-            info = render_comparison(before, after, grid, mask, str(target), view=view, what=what)
+            info = render_comparison(before, after, grid, mask, str(target), view=view, what=what,
+                                     labels=res.face_plateau)
         except RuntimeError as exc:  # matplotlib missing
             out(f"warning: {exc}")
             return
+        pb, pa = info.get("per_surface_before") or [], info.get("per_surface_after") or []
+        if pa and all(k == 1 for k in pa):
+            after_words = "each on one layer after" if n_here > 1 else "on one layer after"
+        else:
+            after_words = f"{'/'.join(str(k) for k in pa) or len(info['after_layers'])} layers after"
         out(f"Wrote report {target} ({n_here} surface{'s' if n_here != 1 else ''}: "
-            f"{len(info['before_layers'])} layers before, {len(info['after_layers'])} after)")
+            f"{'/'.join(str(k) for k in pb) or len(info['before_layers'])} layers before, {after_words})")
 
 
 def main() -> None:  # pragma: no cover - console entry point

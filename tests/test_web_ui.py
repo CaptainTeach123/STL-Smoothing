@@ -208,8 +208,8 @@ def test_the_picture_shows_layer_edges_before_and_none_after(browser, site, payl
     assert b_orange > 400, f"layer edges should be visible before ({b_orange})"
     assert a_orange < 0.05 * b_orange, f"the flattened surface has no layer edges left ({a_orange} vs {b_orange})"
     # legend and captions
-    assert "different layers" in page.inner_text(".pane:nth-child(1) h4 small")
-    assert "one layer" in page.inner_text(".pane:nth-child(2) h4 small")
+    assert "ended on 6 layers" in page.inner_text(".pane:nth-child(1) h4 small")
+    assert "now ends on one layer" in page.inner_text(".pane:nth-child(2) h4 small")
     assert page.locator(".legend li i").count() >= 3
     page.screenshot(path=str(ROOT / "tests" / "web" / "last_ui.png"), full_page=True)
     ctx.close()
