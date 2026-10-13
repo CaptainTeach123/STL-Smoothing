@@ -18,9 +18,10 @@ def _fmt_plateau(p: Plateau) -> str:
     if p.kind == "snapped":
         return f"  {where} {patches:<10} {p.area:9,.0f} mm²  flat at {p.level_before:.3f} mm -> {p.level_after:.2f} mm (on a sampling plane)"
     span = f"{p.z_low:.2f}–{p.z_high:.2f} mm"
+    bed = " (on the bed)" if p.facing == "down" and p.level_after <= 1e-9 else ""
     return (
         f"  {where} {patches:<10} {p.area:9,.0f} mm²  {span:<17} {p.layers_before} layer{'s' if p.layers_before != 1 else ' '}"
-        f"  ->  {p.level_after:.2f} mm"
+        f"  ->  {p.level_after:.2f} mm{bed}"
     )
 
 

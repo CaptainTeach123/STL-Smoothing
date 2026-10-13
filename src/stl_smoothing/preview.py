@@ -94,16 +94,28 @@ def view_texts(before: Mesh, after: Mesh, grid: LayerGrid, labels: np.ndarray, m
     lv_b = [region_levels(before, grid, mask & (labels == i)) for i in ids]
     lv_a = [region_levels(after, grid, mask & (labels == i)) for i in ids]
     nb, na = [len(v) for v in lv_b], [len(v) for v in lv_a]
+    on_bed = noun == "ceiling"  # a ceiling at height 0 is the underside, sitting on the bed
+
+    def where(v):
+        return "the bed" if on_bed and v <= 1e-9 else f"{v:.2f} mm"
+
     if len(ids) == 1:
         b, a = lv_b[0], lv_a[0]
         before_text = (f"The flattened {noun} ended on {nb[0]} layers ({b[0]:.2f}–{b[-1]:.2f} mm)" if nb[0] > 1
                        else f"The flattened {noun} ended on one layer ({b[0]:.2f} mm)" if nb[0] else f"No {noun} found")
-        after_text = (f"It now ends on one layer ({a[0]:.2f} mm)" if na[0] == 1
-                      else f"It now ends on {na[0]} layers ({a[0]:.2f}–{a[-1]:.2f} mm)" if na[0] else "")
+        if na[0] == 1 and on_bed and a[0] <= 1e-9:
+            after_text = "It is now the underside, flat on the bed (0.00 mm)"
+        else:
+            after_text = (f"It now ends on one layer ({a[0]:.2f} mm)" if na[0] == 1
+                          else f"It now ends on {na[0]} layers ({a[0]:.2f}–{a[-1]:.2f} mm)" if na[0] else "")
     else:
         before_text = f"{len(ids)} flattened {noun}s; they ended on {_join(nb)} layers"
         if all(k == 1 for k in na):
-            after_text = "Each now ends on one layer: " + _join(f"{v[0]:.2f}" for v in sorted(lv_a, key=lambda v: v[0])) + " mm"
+            levels = sorted(float(v[0]) for v in lv_a)
+            if any(where(v) == "the bed" for v in levels):
+                after_text = "Each now ends on one layer: " + _join(where(v) for v in levels)
+            else:
+                after_text = "Each now ends on one layer: " + _join(f"{v:.2f}" for v in levels) + " mm"
         else:
             after_text = f"They now end on {_join(na)} layers"
     return before_text, after_text, nb, na

@@ -713,7 +713,12 @@ def analyse(mesh: Mesh, grid: LayerGrid, P: Params) -> Analysis:
     keep_f[keep_f] = accepted[cl[keep_f]]
     plateau_group = np.where(keep_f, grp, -1)
 
-    # -- a plateau that already prints on a single layer has no layer lines: leave it alone
+    # -- a plateau that already prints on a single layer has no layer lines: leave it alone.
+    #    Except the model's underside: a ceiling that reaches down into the first two layers is the
+    #    bottom the part stands on, and if any of it prints above the first layer it is not on the
+    #    bed (the first layer would only be printed where it happens to touch), so it is flattened
+    #    onto the bed instead (see below).
+    bed_reach = grid.first + grid.layer_height
     already: list = []
     live0 = plateau_group >= 0
     if G and live0.any():
@@ -727,6 +732,8 @@ def analyse(mesh: Mesh, grid: LayerGrid, P: Params) -> Analysis:
         gmax = reduceat(np.maximum, fz.max(1)[o], starts)
         mg = P.plane_margin * grid.layer_height + 1e-6
         one = grid.layer_number(gmin - mg) == grid.layer_number(gmax + mg)
+        floating = (gsign[ug] < 0) & (gmin <= bed_reach) & (grid.layer_number(gmax + mg) >= 2)
+        one &= ~floating
         if one.any():
             garea = bincount(gid, weights=area[live0], minlength=G)
             gmed = grouped_wmedian(gid, zc[live0], area[live0], G)
@@ -752,6 +759,14 @@ def analyse(mesh: Mesh, grid: LayerGrid, P: Params) -> Analysis:
         mesh, cl, acc, comp_group, zc, area, soft, valid,
         np.nan_to_num(glevel, nan=0.0), grid, P,
     ) if ncomp else np.zeros(0)
+    if ncomp and live.any():
+        # the underside goes onto the bed: a ceiling patch whose lowest point is within the first two
+        # layers (a deliberate recess higher up keeps its own level)
+        cmin = np.full(ncomp, np.inf)
+        np.minimum.at(cmin, cl[live], tz[live].min(1))
+        down = np.zeros(ncomp, dtype=bool)
+        down[acc] = gsign[comp_group[acc]] < 0
+        clevel = np.where(down & (cmin <= bed_reach), 0.0, clevel)
     plateau_comp = np.where(live, cl, -1)
     return Analysis(
         P=P, topo=topo, normals=n, snormals=ns, area=area, zc=zc, valid=valid, exact=exact,
