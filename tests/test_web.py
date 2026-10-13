@@ -281,3 +281,21 @@ def test_several_flattened_surfaces_read_as_one_layer_each(tmp_path):
     assert view["before_text"].startswith("2 flattened surfaces; they ended on")
     assert view["after_text"] == "Each now ends on one layer: 10.00 and 12.00 mm"
     assert "different layers" not in view["after_text"]
+
+
+def test_reports_are_measured_from_the_lowest_point_wherever_the_file_puts_it(tmp_path):
+    """A model exported 37.25 mm up (or centred on z = 0) must read the same as one sitting at z = 0."""
+    base = scenes.panel_with_dome(cell=1.0).mesh.to_triangles()
+    metas = []
+    for shift in (0.0, 37.25, -5.3):
+        p = tmp_path / f"m{shift}.stl"
+        stlio.write_stl(p, base + np.array([0.0, 0.0, shift]))
+        (tmp_path / f"o{shift}").mkdir()
+        meta, *_ = process(p, tmp_path / f"o{shift}")
+        metas.append(meta)
+    for m in metas[1:]:
+        assert m["summary"] == metas[0]["summary"]
+        assert m["edges_before"] == pytest.approx(metas[0]["edges_before"], rel=1e-3)
+        assert m["edges_after"] == pytest.approx(metas[0]["edges_after"], abs=1.0)
+        v, v0 = m["preview"]["views"][0], metas[0]["preview"]["views"][0]
+        assert (v["before_text"], v["after_text"], v["levels"]) == (v0["before_text"], v0["after_text"], v0["levels"])

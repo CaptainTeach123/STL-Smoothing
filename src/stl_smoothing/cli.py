@@ -14,7 +14,8 @@ from .flatten import FlattenResult, flatten
 from .layers import LayerGrid
 from .mesh import MIN_WELD_TOL, Mesh, auto_weld_tol
 from .params import Params
-from .summary import summarize
+from .preview import view_title
+from .summary import flattened_indices, summarize
 from .stlio import StlError, read_stl, write_stl
 
 REPORT_SUFFIXES = {".png", ".jpg", ".jpeg", ".pdf", ".svg"}
@@ -172,7 +173,11 @@ def run(argv: list[str] | None = None, out=print, err=None) -> int:
 
     res = flatten(mesh, grid, P)
     after = Mesh(res.verts, mesh.faces)
-    summarize(res, mesh, after, grid, a.verbose, out)
+    # report in heights above the bed (the lowest point), like the slicer; `after` stays in the file's
+    # own coordinates for writing
+    lift = np.array([0.0, 0.0, res.z_offset])
+    seen_before, seen_after = Mesh(mesh.verts - lift, mesh.faces), Mesh(res.verts - lift, mesh.faces)
+    summarize(res, seen_before, seen_after, grid, a.verbose, out)
 
     # The picture is a convenience: whatever goes wrong with it must not stop the STL being written.
     if report_path is not None:
@@ -180,7 +185,7 @@ def run(argv: list[str] | None = None, out=print, err=None) -> int:
             out("No changed surfaces: no report written.")
         else:
             try:
-                _write_reports(report_path, mesh, after, grid, res, out)
+                _write_reports(report_path, seen_before, seen_after, grid, res, out)
             except Exception as exc:  # noqa: BLE001
                 out(f"warning: could not write the report: {exc}")
 
@@ -212,8 +217,9 @@ def _write_reports(base: Path, before: Mesh, after: Mesh, grid: LayerGrid, res: 
     except Exception as exc:  # pragma: no cover
         out(f"warning: cannot write the report: {exc}")
         return
-    # Only surfaces that visibly changed (they used to end on several layers) are highlighted.
-    changed = [i for i, p in enumerate(res.plateaus) if p.kind == "smoothed" and p.layers_before > 1]
+    # Only surfaces that visibly changed (they used to end on several layers, or an underside that now
+    # sits on the bed) are highlighted.
+    changed = flattened_indices(res)
     if not changed:
         out("No surface changed layers: no report written.")
         return
@@ -223,6 +229,8 @@ def _write_reports(base: Path, before: Mesh, after: Mesh, grid: LayerGrid, res: 
         mask = region & (res.facing == facing)
         if not mask.any():
             continue
+        if facing < 0:
+            what = view_title(res, mask, what)
         n_here = len({int(i) for i in res.face_plateau[mask]})
         target = base if facing == 1 or not has_tops else base.with_name(base.stem + "_ceilings" + base.suffix)
         try:

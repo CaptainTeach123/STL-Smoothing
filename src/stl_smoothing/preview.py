@@ -15,7 +15,7 @@ from .flatten import FlattenResult
 from .layers import LayerGrid
 from .mesh import Mesh
 from .slicing import contour_segment_count, contour_segments
-from .summary import flattened_indices
+from .summary import flattened_indices, on_bed
 
 PALETTE = [
     (0.0, "#4b63d1"),
@@ -101,10 +101,15 @@ def view_texts(before: Mesh, after: Mesh, grid: LayerGrid, labels: np.ndarray, m
 
     if len(ids) == 1:
         b, a = lv_b[0], lv_a[0]
-        before_text = (f"The flattened {noun} ended on {nb[0]} layers ({b[0]:.2f}–{b[-1]:.2f} mm)" if nb[0] > 1
-                       else f"The flattened {noun} ended on one layer ({b[0]:.2f} mm)" if nb[0] else f"No {noun} found")
-        if na[0] == 1 and on_bed and a[0] <= 1e-9:
-            after_text = "It is now the underside, flat on the bed (0.00 mm)"
+        bottom = on_bed and na[0] == 1 and a[0] <= 1e-9
+        if bottom:
+            before_text = (f"The underside was spread over {nb[0]} layers ({b[0]:.2f}–{b[-1]:.2f} mm)" if nb[0] > 1
+                           else f"The underside printed {b[0]:.2f} mm above the bed")
+        else:
+            before_text = (f"The flattened {noun} ended on {nb[0]} layers ({b[0]:.2f}–{b[-1]:.2f} mm)" if nb[0] > 1
+                           else f"The flattened {noun} ended on one layer ({b[0]:.2f} mm)" if nb[0] else f"No {noun} found")
+        if bottom:
+            after_text = "It now lies flat on the bed (0.00 mm)"
         else:
             after_text = (f"It now ends on one layer ({a[0]:.2f} mm)" if na[0] == 1
                           else f"It now ends on {na[0]} layers ({a[0]:.2f}–{a[-1]:.2f} mm)" if na[0] else "")
@@ -119,6 +124,15 @@ def view_texts(before: Mesh, after: Mesh, grid: LayerGrid, labels: np.ndarray, m
         else:
             after_text = f"They now end on {_join(na)} layers"
     return before_text, after_text, nb, na
+
+
+def view_title(res: FlattenResult, mask: np.ndarray, default: str) -> str:
+    """Heading of the from-below picture: say "underside" when that is what was flattened."""
+    ids = {int(i) for i in res.face_plateau[mask]}
+    bottoms = {i for i in ids if on_bed(res.plateaus[i])}
+    if not bottoms:
+        return default
+    return "The underside (seen from below)" if bottoms == ids else "Flattened ceilings and underside (seen from below)"
 
 
 def cut_limit(before: Mesh, after: Mesh, grid: LayerGrid, mask: np.ndarray, sign: int):
@@ -244,7 +258,7 @@ def build_preview(before: Mesh, after: Mesh, grid: LayerGrid, res: FlattenResult
         limit, margin = cut_limit(before, after, grid, mask, sign)
         view = {
             "key": key,
-            "what": what,
+            "what": what if sign > 0 else view_title(res, mask, what),
             "levels": [float(v) for v in levels],
             "colours": [colours[float(v)] for v in levels],
             "before_text": before_text,

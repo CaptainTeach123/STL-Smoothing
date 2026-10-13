@@ -94,3 +94,59 @@ def test_a_recess_in_the_underside_keeps_its_height():
     assert np.median(zc[pocket]) > 2.4, "the pocket's ceiling must stay up"
     rim = down & ~((c[:, 0] > 27) & (c[:, 0] < 73) & (c[:, 1] > 12) & (c[:, 1] < 48))
     assert a[rim & (zc < 0.1)].sum() / a[rim].sum() > 0.95, "the part around the pocket goes onto the bed"
+
+
+# ---- what must NOT go onto the bed: shallow features that do not reach the bed contact themselves
+def _noisy(seed, amp):
+    rng = np.random.default_rng(seed)
+    return lambda x, y: amp * rng.uniform(-0.5, 0.5, np.shape(x))
+
+
+def test_a_shallow_pocket_in_an_underside_already_on_the_bed_keeps_its_depth():
+    """Debossed text, a label or felt-pad pocket 2 layers deep: the old rules apply (found in review)."""
+    noise = _noisy(21, 0.06)
+
+    def bottom(x, y):
+        pocket = (x > 30) & (x < 60) & (y > 20) & (y < 40)
+        return np.where(pocket, 0.40, 0.03) + noise(x, y)
+
+    mesh = _plate(bottom, cell=1.0)
+    res = flatten(mesh, LayerGrid(0.2))
+    down, zc, _ = _down_faces(mesh, res.verts)
+    c = Mesh(res.verts, mesh.faces).face_centroids()
+    pocket = down & (c[:, 0] > 32) & (c[:, 0] < 58) & (c[:, 1] > 22) & (c[:, 1] < 38)
+    assert np.median(zc[pocket]) > 0.3, "the pocket must not be filled flush with the bed"
+
+
+def test_a_part_standing_on_feet_keeps_its_lifted_bottom():
+    noise = _noisy(22, 0.04)
+
+    def bottom(x, y):
+        feet = ((x < 8) | (x > 92)) & ((y < 8) | (y > 52))
+        return np.where(feet, 0.02, 0.40) + noise(x, y)
+
+    mesh = _plate(bottom, cell=1.0)
+    res = flatten(mesh, LayerGrid(0.2))
+    down, zc, _ = _down_faces(mesh, res.verts)
+    c = Mesh(res.verts, mesh.faces).face_centroids()
+    middle = down & (c[:, 0] > 20) & (c[:, 0] < 80) & (c[:, 1] > 15) & (c[:, 1] < 45)
+    assert np.median(zc[middle]) > 0.3, "the feet must stay feet"
+
+
+def test_an_underside_floating_just_above_the_first_layer_goes_to_the_bed():
+    """0.12-0.28 mm 'prints on one layer' - the second one - so it is not on the bed (found in review)."""
+    wf = scenes.WaveField(13).calibrate((0, SIZE[0]), (0, SIZE[1]))
+    mesh = _plate(lambda x, y: 0.20 + wf(x, y, 0.16))
+    v = mesh.verts.copy()
+    corner = np.flatnonzero((v[:, 0] == 0) & (v[:, 1] == 0) & (v[:, 2] < 5))[0]
+    v[corner, 2] = 0.0
+    mesh = Mesh(v, mesh.faces)
+    grid = LayerGrid(0.2)
+    assert _share_on_bed(mesh, mesh.verts, grid) < 0.05
+    res = flatten(mesh, grid)
+    assert _share_on_bed(mesh, res.verts, grid) > 0.97
+    lines = []
+    summarize(res, mesh, Mesh(res.verts, mesh.faces), grid, False, lines.append)
+    text = "\n".join(lines)
+    assert text.startswith("Flattened") and "bottom " in text and "(on the bed)" in text
+    assert "grazed" not in text, "an underside moved onto the bed is not a surface that 'grazed a sampling plane'"

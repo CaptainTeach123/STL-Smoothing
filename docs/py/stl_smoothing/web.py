@@ -25,7 +25,7 @@ from .mesh import Mesh, auto_weld_tol
 from .params import Params
 from .preview import MAX_PREVIEW_FACES, build_preview
 from .stlio import StlError, parse_stl, stl_bytes
-from .summary import layer_edge_totals, summarize
+from .summary import flattened_indices, layer_edge_totals, summarize
 
 # triangles above which the page warns that a browser tab may run out of memory
 SOFT_LIMIT_TRIANGLES = 1_500_000
@@ -118,9 +118,13 @@ def _run(data, grid: LayerGrid, params: Params, path_out: str, preview_dir: str 
     after = Mesh(res.verts, mesh.faces)
 
     tick("Summarising")
+    # everything the visitor reads is measured from the lowest point (where the slicer puts the bed);
+    # `mesh` / `after` keep the file's own coordinates for writing the STL
+    lift = np.array([0.0, 0.0, res.z_offset])
+    seen_before, seen_after = Mesh(mesh.verts - lift, mesh.faces), Mesh(res.verts - lift, mesh.faces)
     lines: list[str] = []
-    summarize(res, mesh, after, grid, False, lines.append, cli=False)
-    edges = layer_edge_totals(res, mesh, after, grid)
+    summarize(res, seen_before, seen_after, grid, False, lines.append, cli=False)
+    edges = layer_edge_totals(res, seen_before, seen_after, grid)
     meta.update(
         summary=lines,
         plateaus=[
@@ -137,7 +141,7 @@ def _run(data, grid: LayerGrid, params: Params, path_out: str, preview_dir: str 
         max_dz=float(res.max_dz),
         flipped=int(res.flipped_faces),
         degenerate_added=int(res.degenerate_faces_added),
-        flattened=int(sum(1 for p in res.plateaus if p.kind == "smoothed" and p.layers_before > 1)),
+        flattened=len(flattened_indices(res)),
     )
 
     meta["output_bytes"] = 0
@@ -154,7 +158,7 @@ def _run(data, grid: LayerGrid, params: Params, path_out: str, preview_dir: str 
             meta["preview_skipped"] = "The model is too large for the picture; the smoothed STL is still written."
         else:
             tick("Drawing the before/after picture")
-            pv_meta, arrays = build_preview(mesh, after, grid, res)
+            pv_meta, arrays = build_preview(seen_before, seen_after, grid, res)
             os.makedirs(preview_dir, exist_ok=True)
             files = {}
             for name, arr in arrays.items():

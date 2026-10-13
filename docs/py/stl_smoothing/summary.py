@@ -12,13 +12,18 @@ from .slicing import contour_length
 MAX_LINES = 12  # plateaus listed per section before the summary collapses the rest
 
 
+def on_bed(p: Plateau) -> bool:
+    """An underside that was flattened onto the bed (it used to print above the first layer)."""
+    return p.kind == "smoothed" and p.facing == "down" and p.level_after <= 1e-9
+
+
 def _fmt_plateau(p: Plateau) -> str:
-    where = "top    " if p.facing == "up" else "ceiling"
+    where = "top    " if p.facing == "up" else "bottom " if on_bed(p) else "ceiling"
     patches = f"{p.regions} patch{'es' if p.regions != 1 else ''}"
     if p.kind == "snapped":
         return f"  {where} {patches:<10} {p.area:9,.0f} mm²  flat at {p.level_before:.3f} mm -> {p.level_after:.2f} mm (on a sampling plane)"
     span = f"{p.z_low:.2f}–{p.z_high:.2f} mm"
-    bed = " (on the bed)" if p.facing == "down" and p.level_after <= 1e-9 else ""
+    bed = " (on the bed)" if on_bed(p) else ""
     return (
         f"  {where} {patches:<10} {p.area:9,.0f} mm²  {span:<17} {p.layers_before} layer{'s' if p.layers_before != 1 else ' '}"
         f"  ->  {p.level_after:.2f} mm{bed}"
@@ -40,8 +45,9 @@ def _list(title: str, plateaus: list[Plateau], out, verbose: bool, cli: bool = T
 
 
 def flattened_indices(res: FlattenResult) -> list[int]:
-    """Plateaus that visibly changed: they used to end on several layers."""
-    return [i for i, p in enumerate(res.plateaus) if p.kind == "smoothed" and p.layers_before > 1]
+    """Plateaus that visibly changed: they used to end on several layers, or they are an underside
+    that now sits on the bed."""
+    return [i for i, p in enumerate(res.plateaus) if p.kind == "smoothed" and (p.layers_before > 1 or on_bed(p))]
 
 
 def layer_edge_totals(res: FlattenResult, before: Mesh, after: Mesh, grid: LayerGrid) -> tuple[float, float] | None:
@@ -61,7 +67,7 @@ def summarize(res: FlattenResult, before: Mesh, after: Mesh, grid: LayerGrid, ve
     """Write the summary line by line to ``out``.  ``cli=False`` words the hints for the web page
     (which has no ``-v`` or ``--max-range`` option)."""
     flattened = flattened_indices(res)
-    levelled = [i for i, p in enumerate(res.plateaus) if p.kind == "smoothed" and p.layers_before <= 1]
+    levelled = [i for i, p in enumerate(res.plateaus) if p.kind == "smoothed" and p.layers_before <= 1 and not on_bed(p)]
     snapped = [i for i, p in enumerate(res.plateaus) if p.kind == "snapped"]
     pl = res.plateaus
     plural = lambda n: "s" if n != 1 else ""  # noqa: E731
